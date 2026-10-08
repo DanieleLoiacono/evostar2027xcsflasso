@@ -1,0 +1,101 @@
+diff --git a/xcslib-1.5-rc1-niches/include/environments/real_functions_env.h b/xcslib-1.5-rc1-niches/include/environments/real_functions_env.h
+index d71d266..90d409f 100644
+--- a/xcslib-1.5-rc1-niches/include/environments/real_functions_env.h
++++ b/xcslib-1.5-rc1-niches/include/environments/real_functions_env.h
+@@ -81,7 +81,11 @@ public:
+ 		F3,
+ 		FROG,
+ 		STEP,
+-		SINE3
++		SINE3,
++		SINE4,		// [evostar2027 campaign patch]
++		ABS,		// [evostar2027 campaign patch]
++		SINCOS2D,	// [evostar2027 campaign patch]
++		FRIEDMAN5	// [evostar2027 campaign patch]
+ 	};
+ 
+ 	t_real_function real_function = t_real_function::PIECE_WISE_LINEAR;
+@@ -217,6 +221,32 @@ private:
+ 			std::sin((6*M_PI*current_inputs[0])/scale_factor));
+ 	}
+ 
++	// [evostar2027 campaign patch] benchmark functions F4-F7 (see BENCHMARK_FUNCTIONS.md)
++	double	sine4(const vector<double>& current_inputs)
++	{
++		assert(current_inputs.size()==1);
++		return 	scale_factor*(std::sin((2*M_PI*current_inputs[0])/scale_factor)+std::sin((4*M_PI*current_inputs[0])/scale_factor)+
++			std::sin((6*M_PI*current_inputs[0])/scale_factor)+std::sin((8*M_PI*current_inputs[0])/scale_factor));
++	}
++
++	double	abs_mix(const vector<double>& current_inputs)
++	{
++		assert(current_inputs.size()==1);
++		return 	scale_factor*std::fabs(std::sin((2*M_PI*current_inputs[0])/scale_factor)+std::fabs(std::cos((2*M_PI*current_inputs[0])/scale_factor)));
++	}
++
++	double	sincos2d(const vector<double>& current_inputs)
++	{
++		assert(current_inputs.size()==2);
++		return 	scale_factor*std::sin(2*M_PI*current_inputs[0])*std::cos(2*M_PI*current_inputs[1]);
++	}
++
++	double	friedman5(const vector<double>& current_inputs)
++	{
++		assert(current_inputs.size()==5);
++		return 	10*std::sin(M_PI*current_inputs[0]*current_inputs[1]) + 20*std::pow(current_inputs[2]-0.5,2) + 10*current_inputs[3] + 5*current_inputs[4];
++	}
++
+ 	double	tile(const vector<double>& current_inputs) 
+ 	{
+ 		assert(current_inputs.size()==2);
+diff --git a/xcslib-1.5-rc1-niches/src/environments/real_functions_env.cpp b/xcslib-1.5-rc1-niches/src/environments/real_functions_env.cpp
+index 9dff55a..4f7b290 100644
+--- a/xcslib-1.5-rc1-niches/src/environments/real_functions_env.cpp
++++ b/xcslib-1.5-rc1-niches/src/environments/real_functions_env.cpp
+@@ -7,7 +7,9 @@ double			real_functions_env::min_input;
+ double			real_functions_env::max_input;
+ unsigned long	real_functions_env::no_inputs;
+ 
+-const std::vector<std::string> real_functions_env::configuration_parameters = {"function", "min value", "max value", "scale factor", "sampling resolution","number of segments","random function in every experiment","save functions filename","number of tiles"};
++// [evostar2027 campaign patch] "min input"/"max input" are the keys actually read by set_parameters();
++// without them in this list check_parameters() rejects them and the domain is stuck at [0,1].
++const std::vector<std::string> real_functions_env::configuration_parameters = {"function", "min value", "max value", "min input", "max input", "scale factor", "sampling resolution","number of segments","random function in every experiment","save functions filename","number of tiles"};
+ 
+ real_functions_env::real_functions_env(xcslib::configuration_manager& xcs_config)
+ {
+@@ -197,6 +199,35 @@ real_functions_env::set_function(xcslib::configuration_manager &configuration, s
+ 		return;
+ 	}
+ 
++	// [evostar2027 campaign patch] benchmark functions F4-F7 (see BENCHMARK_FUNCTIONS.md)
++	if (str_fun=="sine4")
++	{
++		function = &real_functions_env::sine4; 	no_inputs = 1;
++		real_function=t_real_function::SINE4;
++		return;
++	}
++
++	if (str_fun=="abs")
++	{
++		function = &real_functions_env::abs_mix; 	no_inputs = 1;
++		real_function=t_real_function::ABS;
++		return;
++	}
++
++	if (str_fun=="sincos2d")
++	{
++		function = &real_functions_env::sincos2d; 	no_inputs = 2;
++		real_function=t_real_function::SINCOS2D;
++		return;
++	}
++
++	if (str_fun=="friedman5")
++	{
++		function = &real_functions_env::friedman5; 	no_inputs = 5;
++		real_function=t_real_function::FRIEDMAN5;
++		return;
++	}
++
+ 	if (str_fun=="tiling")
+ 	{ 
+ 		function = &real_functions_env::tile; 	no_inputs = 2;

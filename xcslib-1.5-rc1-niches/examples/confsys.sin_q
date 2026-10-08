@@ -1,0 +1,55 @@
+<random>
+	seed = 1
+</random>
+
+<environment::real_functions>
+        min value = 0.0
+	max value = 1.0
+        function = sine
+</environment::real_functions>
+
+<condition::real_interval>
+       input size = 1
+        min input = 0
+        max input = 1
+               r0 = 0.2
+               m0 = 0.2
+  mutation method = fixed
+ crossover method = onepoint
+</condition::real_interval>
+
+<classifier_system>
+      population size = 400
+        learning rate = 0.2
+             theta GA = 25
+crossover probability = 0.8
+ mutation probability = 0.04
+         epsilon zero = 0.05
+exploration strategy = random
+         theta delete = 20
+       GA subsumption = on
+         theta GA sub = 20
+</classifier_system>
+
+<experiments>
+	first experiment = 0
+	number of experiments = 10
+        first problem = 0
+        number of learning problems = 10000
+	number of condensation problems = 10000
+        save final population = on
+	save population every = 0
+	save action-value function = on
+</experiments>
+
+<prediction::base>
+	input size = 1
+	prediction function = nlms
+	degree = 2
+</prediction::base>
+
+<prediction::nlms>
+	learning rate = 0.2
+	x0 = 1.
+</prediction::nlms>
+

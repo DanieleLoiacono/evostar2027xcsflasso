@@ -1,0 +1,124 @@
+{
+  "versions": {
+    "xcsf": "2.0.0",
+    "python": "3.14.4",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "sklearn": "1.9.1"
+  },
+  "protocol": {
+    "seed": 42,
+    "train_samples": 600,
+    "test_samples": 400,
+    "epochs": 5,
+    "n_features": 6,
+    "true_nonzero_slopes": 3,
+    "noise_std": 0.05,
+    "test_targets": "noiseless function",
+    "learning_rate": 0.03,
+    "lasso_alpha": 0.01,
+    "lasso_window": 256,
+    "lasso_tol": 1e-07,
+    "lasso_learning_rate_decay": 0.0,
+    "rls_delta": 1000.0,
+    "forgetting_factor": 1.0,
+    "memory": "array payload only; excludes Python overhead and temporary workspace"
+  },
+  "results": [
+    {
+      "method": "lms",
+      "test_rmse": 0.010192360706903271,
+      "training_seconds": 0.011586083099246025,
+      "nonzero_slopes": 6,
+      "retained_samples": 0,
+      "array_payload_bytes": 56,
+      "weights": [
+        1.506445190006674,
+        2.0024583610378035,
+        0.006108835271951514,
+        -1.0058746608625715,
+        0.012335777503204562,
+        0.4995311594292866,
+        -0.0035955909531728775
+      ],
+      "converged": null,
+      "kkt_violation": null
+    },
+    {
+      "method": "nlms",
+      "test_rmse": 0.0059203487855601054,
+      "training_seconds": 0.019354375079274178,
+      "nonzero_slopes": 6,
+      "retained_samples": 0,
+      "array_payload_bytes": 56,
+      "weights": [
+        1.503868134172435,
+        2.000769830183351,
+        0.005228043995828808,
+        -1.0001317598048935,
+        0.0069962404028906,
+        0.4987617144254307,
+        -0.0020349519329267976
+      ],
+      "converged": null,
+      "kkt_violation": null
+    },
+    {
+      "method": "rls",
+      "test_rmse": 0.0038832945108860832,
+      "training_seconds": 0.10423479205928743,
+      "nonzero_slopes": 6,
+      "retained_samples": 0,
+      "array_payload_bytes": 504,
+      "weights": [
+        1.5034683777700628,
+        2.0012832415797783,
+        0.0006571249561747743,
+        -0.9994983181528114,
+        0.003923937005270947,
+        0.500520447041874,
+        -0.00040803566287432916
+      ],
+      "converged": null,
+      "kkt_violation": null
+    },
+    {
+      "method": "lasso_online",
+      "test_rmse": 0.02674024309277854,
+      "training_seconds": 0.01757891708984971,
+      "nonzero_slopes": 5,
+      "retained_samples": 0,
+      "array_payload_bytes": 56,
+      "weights": [
+        1.5050194966991057,
+        1.9739188004766859,
+        0.0012269680949532366,
+        -0.9742383902761252,
+        0.00021542320433448413,
+        0.4710030233130498,
+        -0.0
+      ],
+      "converged": null,
+      "kkt_violation": null
+    },
+    {
+      "method": "lasso_batch",
+      "test_rmse": 0.02589822012850429,
+      "training_seconds": 0.44080308405682445,
+      "nonzero_slopes": 3,
+      "retained_samples": 256,
+      "array_payload_bytes": 14392,
+      "weights": [
+        1.5032105469700245,
+        1.9730993073083594,
+        0.0,
+        -0.9758108399364112,
+        0.0,
+        0.4722254428181533,
+        -0.0
+      ],
+      "converged": true,
+      "kkt_violation": 1.6385773080399013e-08
+    }
+  ]
+}

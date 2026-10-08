@@ -1,0 +1,118 @@
+# Parameter parity audit — xcslib-1.5-rc1-niches vs xcsf_python-2.0.0
+
+This document records what was verified **in the source code** of both libraries
+(AGENTS.md rule 7: equal names do not imply equal semantics), how every parameter
+is mapped, and which differences remain because removing them would require
+modifying a library. The mapping is implemented in `xcsfcamp/parity.py`; the
+generated per-campaign table is `results/<id>/manifest/parity_audit.md`
+(the plan step fails if any row is not equal).
+
+## 1. Learning protocol
+
+| aspect | xcslib (`experiment_mgr2`, `xcsf_classifier_system`) | xcsf_python (`XCSFRegressor`, `core.py`) | campaign setting |
+|---|---|---|---|
+| problem type | single-step, one dummy action; reward = f(x) | supervised regression, single implicit action | same |
+| training | alternates 1 learning problem (update + GA) and 1 test problem | every sample is an update (+GA) | N learning problems ↔ N samples, one pass, `shuffle=False` |
+| learning during test problems | `update during test` (**default on!**) | `predict` never learns | **off** in xcslib |
+| time used by θ_GA | `total_steps` (learning problems only) | `time` (updates only) | identical meaning |
+| online error | rolling mean of \|P − f(x)\| on test problems (covering allowed, no update), `statistics rolling window size` | `performance_history_`: \|y − ŷ\| of the current model on each incoming sample *before* it is learned (after covering), windows of `history_interval` | window = 100 in both; same estimator, different random points |
+| final evaluation | `avf.*` file: prediction on the grid `min, min+res, …` (float accumulation, last coordinate fastest) | `predict` on the same grid (replicated bit-for-bit in `benchmarks.Benchmark.grid`) | identical points, checked at publication time |
+| uncovered evaluation points | covering inside `predict` (new classifier) | `unmatched="nearest"` (no covering) | reported: `unmatched_grid_frac` (Python) |
+| inputs | `xcs_random::random()` (mt19937_64) inside the environment | `numpy` PCG64 stream, `SeedSequence([seed, dim])` | same distribution, same seed integer, **different streams** (sharing the stream would need a library change) |
+| seed | `<random> seed` (0 = clock! never used) | `random_state` | `seed = seed_base + run_id` in both |
+| runs | one process per run, `first experiment = run_id`, `number of experiments = 1` | one estimator per run | same run ids |
+
+## 2. XCSF parameters (must be semantically identical)
+
+| semantic parameter | xcslib key | xcsf_python | check |
+|---|---|---|---|
+| N (micro-classifiers) | `population size` | `population_size` | equal |
+| ε0 | `epsilon zero` | `epsilon_0` | equal; ε0 = 5 % of the output range |
+| β (error, fitness, niche size) | `learning rate` (classifier_system) | `learning_rate` | equal |
+| α, ν | `alpha`, `vi` | `alpha`, `nu` | equal |
+| θ_GA | `theta GA` | `theta_ga` | equal (numerosity-weighted mean timestamp in both) |
+| χ, μ | `crossover probability`, `mutation probability` | same names | equal (μ per endpoint in both, `fixed` mutation) |
+| r0 | `r0` (condition) | `cover_radius` (`normalize=False`) | equal, raw units: cover `[x−U(0,r0), x+U(0,r0)]` in both |
+| m0 | `m0` | `mutation_scale` | equal, `U(−m0, m0)` per endpoint in both |
+| crossover | `crossover = one-point` | `crossover="one_point"` | same operator (whole interval or upper endpoint swapped) |
+| θ_del, δ | `theta delete`, δ **hard-coded 0.1** | `theta_delete`, `delta` | equal; config is rejected if δ ≠ 0.1 |
+| θ_sub, GA subsumption | `theta GA sub`, `GA subsumption` + `GA subsumption on [A]` | `theta_subsume`, `ga_subsumption` (parents, then niche) | equal |
+| action-set subsumption | `AS subsumption = off` (implemented, never called by `step()`) | `match_subsumption=False` | equal (off) |
+| selection | `offspring selection for GA = roulette-wheel` | `selection="roulette"` | equal |
+| F_I, ε_I, niche size init | `fitness init`, `error init`, `set size init` | `initial_fitness`, `initial_error`, (fixed 1.0) | equal |
+| MAM | `use MAM` read but **not settable** (rejected by `check_parameters`), default on | `use_mam=True` | equal; config rejected if `use_mam` is false |
+| error before predictor update | `update error first = on` | `error_before_prediction=True` | equal |
+| bounded conditions | `bounded = off` | `bounded=False` | equal (see differences D3) |
+| condensation | 0 problems | 0 epochs | not used (no 1:1 schedule) |
+
+## 3. Common predictors (predictor-specific hyper-parameters)
+
+| predictor | xcslib | xcsf_python | mapping and evidence |
+|---|---|---|---|
+| Constant | `prediction function = value`, `<prediction::value> learning rate = η`: `w ← w + η (y − w)` | `prediction="constant"`, `prediction_learning_rate=η`, `initial_prediction=0` | identical update (no MAM on the predictor in either) |
+| NLMS | `nlms`, `learning rate = η`, `x0`: `w ← w + η e φ / (x0² + Σx²)` with φ = [x0, x] | `prediction="nlms"`, `prediction_learning_rate=η`, `x0` | identical update |
+| RLS | `rls`, `x0`. **`delta` is a static never read from confsys → V0 = 0·I**, and the update adds **I** every time: V ← V − K φᵀ V + I | `prediction="rlsk"`, `rls_delta=1e-12` (≈0, the minimum allowed), `process_noise=1`, `forgetting_factor=1`, `kalman_noise=False` | identical recursion (Joseph form = V − Kφᵀ V algebraically). Python `rls` (textbook RLS with V0 = δI, no Q) has **no xcslib counterpart** and is run only in the Python-only study as `rls_standard` |
+| RLSK | `rlsk` exists but `init_prediction_functions` registers it as `PREDICTION_RLS` → selecting it aborts ("function not available") | `rlsk` | excluded from the parity study (would need a library fix) |
+
+`validate` checks these mappings numerically: the Python `LocalPredictor` with the
+campaign settings reproduces a NumPy transcription of `value.cpp`, `nlms.cpp` and
+`rls.cpp` to ≤ 1e-6 relative error on 500-sample sequences.
+
+In every xcslib run the `<prediction::nlms>` section must be present (the binary
+refuses to start otherwise); for Constant and RLS runs it is inert and marked as such in
+the generated confsys.
+
+## 4. Remaining semantic differences (measured, not removed)
+
+They are properties of the implementations being compared; the campaign quantifies
+their effect instead of hiding it. None can be aligned through configuration.
+
+- **D1 – xcslib `fixed`/`gaussian` mutation bug.** In `real_interval_condition.cpp`
+  the upper endpoint is set with `set_upper_bound(lower)`: whenever the upper bound
+  is mutated it becomes the (possibly mutated) *lower* bound, i.e. a zero-width
+  interval `(l, l]` that matches nothing. xcsf_python mutates each endpoint
+  independently (documented in its `docs/algorithm.md`). With μ = 0.04 per endpoint,
+  ≈ 4 % of offspring are affected. Reported per run as `n_degenerate_rules`.
+- **D2 – interval semantics.** xcslib matches `lower < x ≤ upper` (unbounded); Python
+  uses the closed interval. Measure-zero for continuous inputs, but grid points equal to
+  a rule bound (e.g. the domain minimum) may be treated differently.
+- **D3 – clipping.** With `bounded = off` xcslib still clips to `[min input, max input]`
+  after a crossover that swaps upper endpoints (`check()`); Python never clips with
+  `bounded=False`.
+- **D4 – covering when the population is full.** xcslib inserts then deletes (the new
+  rule may be deleted immediately and covering repeats); Python deletes first.
+- **D5 – offspring bookkeeping.** Same values (error, fitness·0.1, niche size, averaged on
+  crossover) but deletion happens after both children (Python: in one call, xcslib: two
+  calls); probabilistically equivalent.
+- **D6 – uncovered evaluation points.** xcslib covers during evaluation (prediction of a
+  fresh rule = 0 / x0-weighted zero weights); Python extrapolates from the nearest rule.
+  `unmatched_grid_frac` is ≈ 0 after training on 1-D problems.
+- **D7 – xcslib `value_pf` initial value is uninitialised** (undefined behaviour; in
+  practice 0). Published runs are rejected if a constant prediction is absurd.
+- **D8 – random streams.** Same seeds, different generators and different consumption
+  order: runs are *replicates*, not paired trajectories. Cross-implementation tests are
+  therefore unpaired.
+
+## 5. Library modification (the only one)
+
+`campaign/patches/xcslib-benchmark-functions.patch` (applied by
+`scripts/01_apply_cxx_patch.sh`, committed separately with `--commit`):
+
+1. `real_functions_env.cpp`: add `"min input"`, `"max input"` to
+   `configuration_parameters`. **Reason:** `set_parameters()` reads exactly these keys,
+   but `check_parameters()` rejected them (and silently ignored `min value`/`max value`),
+   so the input domain was fixed to [0, 1] and none of the benchmark domains could be set.
+2. `real_functions_env.{h,cpp}`: add the functions `sine4`, `abs` (F4, F5, paper-derived)
+   and `sincos2d`, `friedman5` (optional F6, F7). `sine` and `sine3` were already present
+   (`scale factor = 100` gives F1–F3 exactly).
+
+The exact diff is stored in every campaign manifest (`manifest/plan_snapshot.json →
+patch.patch_text`) together with the hash of both library trees; runs refuse to start if
+either tree changes after planning.
+
+## 6. Build
+
+`scripts/02_build_cxx.sh` builds the upstream `rf` target (`make/xcsf.make VERSION=-rf
+ACTIONS=dummy_action USERFLAGS=-D__NICHE_TRACKING__`) out of tree with `-O2` instead of
+`-O0 -g` (no `-ffast-math`, assertions kept). Flags, compiler and binary hash are in
+`campaign/build/build_info.json` and in each published run's `DONE.json`.
