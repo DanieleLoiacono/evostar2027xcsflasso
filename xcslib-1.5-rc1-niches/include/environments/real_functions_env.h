@@ -81,7 +81,11 @@ public:
 		F3,
 		FROG,
 		STEP,
-		SINE3
+		SINE3,
+		SINE4,		// [evostar2027 campaign patch]
+		ABS,		// [evostar2027 campaign patch]
+		SINCOS2D,	// [evostar2027 campaign patch]
+		FRIEDMAN5	// [evostar2027 campaign patch]
 	};
 
 	t_real_function real_function = t_real_function::PIECE_WISE_LINEAR;
@@ -215,6 +219,32 @@ private:
 		assert(current_inputs.size()==1);
 		return 	scale_factor*(std::sin((2*M_PI*current_inputs[0])/scale_factor)+std::sin((4*M_PI*current_inputs[0])/scale_factor)+
 			std::sin((6*M_PI*current_inputs[0])/scale_factor));
+	}
+
+	// [evostar2027 campaign patch] benchmark functions F4-F7 (see BENCHMARK_FUNCTIONS.md)
+	double	sine4(const vector<double>& current_inputs)
+	{
+		assert(current_inputs.size()==1);
+		return 	scale_factor*(std::sin((2*M_PI*current_inputs[0])/scale_factor)+std::sin((4*M_PI*current_inputs[0])/scale_factor)+
+			std::sin((6*M_PI*current_inputs[0])/scale_factor)+std::sin((8*M_PI*current_inputs[0])/scale_factor));
+	}
+
+	double	abs_mix(const vector<double>& current_inputs)
+	{
+		assert(current_inputs.size()==1);
+		return 	scale_factor*std::fabs(std::sin((2*M_PI*current_inputs[0])/scale_factor)+std::fabs(std::cos((2*M_PI*current_inputs[0])/scale_factor)));
+	}
+
+	double	sincos2d(const vector<double>& current_inputs)
+	{
+		assert(current_inputs.size()==2);
+		return 	scale_factor*std::sin(2*M_PI*current_inputs[0])*std::cos(2*M_PI*current_inputs[1]);
+	}
+
+	double	friedman5(const vector<double>& current_inputs)
+	{
+		assert(current_inputs.size()==5);
+		return 	10*std::sin(M_PI*current_inputs[0]*current_inputs[1]) + 20*std::pow(current_inputs[2]-0.5,2) + 10*current_inputs[3] + 5*current_inputs[4];
 	}
 
 	double	tile(const vector<double>& current_inputs) 

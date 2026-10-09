@@ -7,7 +7,9 @@ double			real_functions_env::min_input;
 double			real_functions_env::max_input;
 unsigned long	real_functions_env::no_inputs;
 
-const std::vector<std::string> real_functions_env::configuration_parameters = {"function", "min value", "max value", "scale factor", "sampling resolution","number of segments","random function in every experiment","save functions filename","number of tiles"};
+// [evostar2027 campaign patch] "min input"/"max input" are the keys actually read by set_parameters();
+// without them in this list check_parameters() rejects them and the domain is stuck at [0,1].
+const std::vector<std::string> real_functions_env::configuration_parameters = {"function", "min value", "max value", "min input", "max input", "scale factor", "sampling resolution","number of segments","random function in every experiment","save functions filename","number of tiles"};
 
 real_functions_env::real_functions_env(xcslib::configuration_manager& xcs_config)
 {
@@ -194,6 +196,35 @@ real_functions_env::set_function(xcslib::configuration_manager &configuration, s
 	{ 
 		function = &real_functions_env::sine3; 	no_inputs = 1;
 		real_function=t_real_function::SINE3;
+		return;
+	}
+
+	// [evostar2027 campaign patch] benchmark functions F4-F7 (see BENCHMARK_FUNCTIONS.md)
+	if (str_fun=="sine4")
+	{
+		function = &real_functions_env::sine4; 	no_inputs = 1;
+		real_function=t_real_function::SINE4;
+		return;
+	}
+
+	if (str_fun=="abs")
+	{
+		function = &real_functions_env::abs_mix; 	no_inputs = 1;
+		real_function=t_real_function::ABS;
+		return;
+	}
+
+	if (str_fun=="sincos2d")
+	{
+		function = &real_functions_env::sincos2d; 	no_inputs = 2;
+		real_function=t_real_function::SINCOS2D;
+		return;
+	}
+
+	if (str_fun=="friedman5")
+	{
+		function = &real_functions_env::friedman5; 	no_inputs = 5;
+		real_function=t_real_function::FRIEDMAN5;
 		return;
 	}
 
