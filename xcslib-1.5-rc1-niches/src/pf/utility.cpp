@@ -45,6 +45,14 @@ namespace xcsflib
 		}
 		#endif
 
+		#ifdef __PF_RLS_DELTA__
+		rls_delta_pf	dummy_rls_delta(xcs_config);
+		if (dummy_rls_delta.inited())
+		{
+			available_functions.insert(prediction_function_type::PREDICTION_RLS_DELTA);
+		}
+		#endif
+
 		#ifdef __PF_RLSK__
 		rlsk_pf	dummy_rlsk(xcs_config);
 		if (dummy_rlsk.inited())
@@ -85,6 +93,8 @@ namespace xcsflib
 				return new value_pf(owner);
 			case prediction_function_type::PREDICTION_RLS:
 				return new rls_pf(owner);
+			case prediction_function_type::PREDICTION_RLS_DELTA:
+				return new rls_delta_pf(owner);
 #endif
 			case prediction_function_type::PREDICTION_NLMS:
 				return new nlms_pf(owner);

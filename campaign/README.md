@@ -5,8 +5,9 @@ implementations on continuous single-step function approximation, plus the separ
 Python-only Lasso extension.
 
 Everything lives in this `campaign/` folder. The two libraries are used as upstream code:
-the only change is the xcslib benchmark patch (`patches/`, see
-`docs/PARAMETER_PARITY.md §5`).
+the only changes are two xcslib patches (`patches/`, see `docs/PARAMETER_PARITY.md §5`):
+the benchmark functions, and the prediction function `rls_delta` (the RLS of Lanzi et al. 2005,
+Alg. 5, with V0 = δI). xcsf_python is not modified.
 
 | file | content |
 |---|---|
@@ -32,22 +33,24 @@ All commands from the project root (the folder containing `campaign/`).
 # 0. Python environment (venv in ~/.venvs/xcsfcamp, outside Dropbox)
 bash campaign/scripts/00_setup_python.sh
 
-# 1. Apply the xcslib benchmark patch, in its own commit (also commits the unmodified
-#    libraries first if the repository has no commit yet)
+# 1. Apply the two xcslib patches (benchmark functions; rls_delta), one commit each
+#    (also commits the unmodified libraries first if the repository has no commit yet)
 bash campaign/scripts/01_apply_cxx_patch.sh --commit
 
-# 2. Build xcslib out of tree -> campaign/build/bin/xcsf-rf (+ build_info.json)
+# 2. Build xcslib out of tree -> campaign/build/bin/xcsf-rf (+ build_info.json), plus the
+#    predictor test driver campaign/build/bin/pf_driver (source: campaign/tools/pf_driver.cpp)
 bash campaign/scripts/02_build_cxx.sh
 
 # 3. Validation gate (must end with "[ok] validation complete"; planning is refused
 #    until a full validation has passed for the current build, libraries and code)
-#    benchmark unit tests, reference plots, predictor-level parity, xcslib functions vs
-#    Python definitions, determinism of both implementations
+#    benchmark unit tests, reference plots, predictor-level parity (Python mapping and the
+#    compiled C++ prediction functions vs NumPy transcriptions), xcslib functions vs
+#    Python definitions, rls_delta end-to-end run, determinism of both implementations
 bash campaign/scripts/03_validate.sh --upstream-tests
 
 # 4. Smoke test of the whole pipeline (2 benchmarks, 2 runs, short budget; ~2 min)
 bash campaign/scripts/smoke_test.sh 4
-#    -> campaign/results/evostar2027-v1-smoke/derived/report.md
+#    -> campaign/results/evostar2027-v2-smoke/derived/report.md
 
 # 5. Optional pilot (5 runs per cell) to check run times and between-run spread
 bash campaign/scripts/04_plan.sh --profile pilot
@@ -57,8 +60,8 @@ bash campaign/scripts/07_analyze.sh --profile pilot
 
 # 6. Full campaign
 bash campaign/scripts/04_plan.sh                      # plan + parity audit (fails on any mismatch)
-bash campaign/scripts/05_run_cxx.sh -j 8              # 450 xcslib runs (minutes)
-bash campaign/scripts/06_run_python.sh --study parity -j 8   # 450 Python parity runs
+bash campaign/scripts/05_run_cxx.sh -j 8              # 600 xcslib runs (minutes)
+bash campaign/scripts/06_run_python.sh --study parity -j 8   # 600 Python parity runs
 bash campaign/scripts/06_run_python.sh --study pyext  -j 8   # 1200 Python-only runs (Lasso Batch dominates)
 bash campaign/scripts/07_analyze.sh                   # verify -> collect -> statistics -> report
 
@@ -127,3 +130,42 @@ Edit `config/campaign.json` and give it a new `campaign_id`. Useful knobs: `n_ru
 variants (lists expand into separate arms, e.g. `lasso_alpha`), analysis margins.
 Configuration keys are validated strictly; parameters that cannot be matched across
 implementations are rejected for the parity study.
+
+## Troubleshooting
+
+### `02_build_cxx.sh` fails with errors in `<iostream>` / `<__locale>` / `_LIBCPP_BEGIN_NAMESPACE_STD` (macOS)
+
+**Symptom.** Dozens of errors such as `C++ requires a type specifier for all declarations`
+inside the libc++ headers of the system SDK, ending in `[fail] build failed`. The build log
+shows the compiler as `x86_64-apple-darwin13.4.0-clang++`.
+
+**Cause.** An active conda environment (`(base)`) puts an old, x86_64 cross-compiler clang
+first on the `PATH`/`CXX`. It is then used with the macOS SDK, whose libc++ headers are too
+recent for it. This is a toolchain mismatch, not a bug in the XCSF sources.
+
+**Fix.** `02_build_cxx.sh` honours `$CXX` (default `g++`), so point it to Apple's compiler:
+
+```bash
+conda deactivate                 # run twice if needed, to leave (base)
+which clang++                    # expected: /usr/bin/clang++
+xcode-select -p                  # must print a valid path
+unset CXX CC CXXFLAGS CPPFLAGS   # drop anything conda exported
+CXX=/usr/bin/clang++ bash campaign/scripts/02_build_cxx.sh
+```
+
+On success `campaign/build/build_info.json` records `/usr/bin/clang++` as the compiler.
+
+**GSL.** The warning `gsl-config not found` means GSL is not on the `PATH`. On Apple
+Silicon Homebrew lives in `/opt/homebrew`:
+
+```bash
+brew install gsl
+export PATH="/opt/homebrew/bin:$PATH"
+gsl-config --version
+```
+
+**Alternative.** If a conda compiler is still picked up, use Homebrew's LLVM:
+`brew install llvm`, then `CXX=/opt/homebrew/opt/llvm/bin/clang++ bash campaign/scripts/02_build_cxx.sh`.
+
+**Architecture.** Do not mix the conda x86_64 toolchain with Homebrew's arm64 GSL: linking
+would fail with architecture errors. Use the native arm64 `clang++` together with Homebrew GSL.

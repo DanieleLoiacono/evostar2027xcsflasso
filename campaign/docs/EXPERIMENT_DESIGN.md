@@ -18,8 +18,10 @@
   (patched into xcslib too) but are off by default.
 - **Benchmarks per study**: parity uses all five; pyext omits `sine_shifted_1d`, which after
   domain scaling is the same problem as `sine_low_1d` (same training stream, same results).
-- **Predictor**: parity = Constant, NLMS, RLS (xcslib semantics); pyext = the same three +
-  `rls_standard` + Lasso Online and Lasso Batch, each at λ ∈ {0.001, 0.01, 0.1}.
+- **Predictor**: parity = Constant, NLMS, RLS (xcslib semantics: V0 = 0, V += I per update) and
+  `rls_delta` (RLS of Lanzi et al. 2005, Alg. 5: V0 = δI, δ = 1000; xcslib `rls_delta` vs Python
+  `rlsk` with Q = 0); pyext = Constant, NLMS, RLS + `rls_standard` (the same estimator as
+  `rls_delta`, in QR form) + Lasso Online and Lasso Batch, each at λ ∈ {0.001, 0.01, 0.1}.
 - **Replicates**: 30 runs per cell, seeds `seed_base + run_id`.
 
 Fixed: N = 800, 50 000 learning problems, ε0 = 0.05 × output range, β = η = 0.2, α = 0.1,

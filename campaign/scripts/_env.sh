@@ -18,6 +18,7 @@ export PYTHONDONTWRITEBYTECODE=1
 export LC_ALL=C
 
 CXX_BIN="$CAMPAIGN_DIR/build/bin/xcsf-rf"
+PF_DRIVER_BIN="$CAMPAIGN_DIR/build/bin/pf_driver"
 
 xc() { "$PYTHON" -m xcsfcamp "$@"; }
 

@@ -24,6 +24,13 @@ class ParityError(ValueError):
 # weights by O(1e-9 * error), i.e. numerically the same "no-op first update".
 PY_RLS_XCSLIB_DELTA = 1e-12
 
+# The paper's RLS (Lanzi et al., IlliGAL 2005012, Sec. 7.3, Alg. 5: V0 = delta*I, no Q, no forgetting) is
+#   xcslib : prediction function 'rls_delta' (patches/xcslib-rls-delta.patch), covariance form
+#   Python : LocalPredictor 'rlsk' with process_noise=0, forgetting_factor=1, kalman_noise=False, same delta
+#            (covariance form, Joseph update: algebraically identical, slightly better rounding)
+# Both: zero initial weights, offspring inherit the weights and restart from V = delta*I.
+# The QR (square-root information) form of the same estimator is Python 'rls' (type rls_standard).
+
 # xcslib parameters that are hard-coded or not settable through confsys
 CXX_HARDCODED = {
     "delta": 0.1,            # xcsf_classifier_system::set_parameters: delta_del = 0.1
@@ -84,7 +91,7 @@ def cxx_sections(spec: Dict[str, Any]) -> List[Tuple[str, List[Tuple[str, str]],
     if any(l != lo for l in bench.lower) or any(u != hi for u in bench.upper):
         raise ParityError("xcslib supports a single [min input, max input] for all inputs")
     ptype = p["type"]
-    pf = {"constant": "value", "nlms": "nlms", "rls_xcslib": "rls"}.get(ptype)
+    pf = {"constant": "value", "nlms": "nlms", "rls_xcslib": "rls", "rls_delta": "rls_delta"}.get(ptype)
     if pf is None:
         raise ParityError(f"predictor type '{ptype}' has no xcslib counterpart")
 
@@ -162,6 +169,11 @@ def cxx_sections(spec: Dict[str, Any]) -> List[Tuple[str, List[Tuple[str, str]],
     if ptype == "rls_xcslib":
         secs.append(("prediction::rls", [("x0", _num(p["x0"]))],
                      "rls_pf: V0 = delta*I with delta never read (=0); V <- V - K phi^T V + I"))
+    if ptype == "rls_delta":
+        if not (float(p["delta"]) > 0):
+            raise ParityError("rls_delta requires delta > 0")
+        secs.append(("prediction::rls_delta", [("x0", _num(p["x0"])), ("delta", _num(p["delta"]))],
+                     "rls_delta_pf (patches/xcslib-rls-delta.patch): V0 = delta*I; V <- V - (V phi)(V phi)^T/(1+phi^T V phi)"))
     return secs
 
 
@@ -307,6 +319,9 @@ def py_params(spec: Dict[str, Any]) -> Dict[str, Any]:
     elif t == "rls_xcslib":
         kw.update(prediction="rlsk", x0=float(p["x0"]), rls_delta=PY_RLS_XCSLIB_DELTA, forgetting_factor=1.0,
                   process_noise=1.0, kalman_noise=False)
+    elif t == "rls_delta":
+        kw.update(prediction="rlsk", x0=float(p["x0"]), rls_delta=float(p["delta"]), forgetting_factor=1.0,
+                  process_noise=0.0, kalman_noise=False)
     elif t == "rls_standard":
         kw.update(prediction="rls", x0=float(p["x0"]), rls_delta=float(p["delta"]), forgetting_factor=1.0)
     elif t == "lasso_online":
@@ -395,4 +410,13 @@ def audit_rows(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
             note=f"{PY_RLS_XCSLIB_DELTA:g} is the smallest admissible value in xcsf_python")
         row("process noise Q", "(V += I every update)", 1.0, "process_noise", kw["process_noise"])
         row("forgetting factor", "(none)", 1.0, "forgetting_factor", kw["forgetting_factor"])
+    elif pt == "rls_delta":
+        row("predictor", "prediction function", pb["prediction function"], "prediction", kw["prediction"], equal=True,
+            note="paper RLS (Alg. 5): xcslib rls_delta_pf vs Python rlsk with Q=0, lambda=1, R=1 (Joseph form)")
+        row("x0", "prediction::rls_delta x0", secs["prediction::rls_delta"]["x0"], "x0", kw["x0"])
+        row("delta (V0 = delta*I)", "prediction::rls_delta delta", secs["prediction::rls_delta"]["delta"],
+            "rls_delta", kw["rls_delta"])
+        row("process noise Q", "(none)", 0.0, "process_noise", kw["process_noise"])
+        row("forgetting factor", "(none)", 1.0, "forgetting_factor", kw["forgetting_factor"])
+        row("measurement noise R", "(1 in beta = 1 + phi^T V phi)", "off", "kalman_noise", "off" if not kw["kalman_noise"] else "on")
     return rows

@@ -34,11 +34,12 @@ PREDICTOR_KEYS = {
     "constant": {"type", "eta"},
     "nlms": {"type", "eta", "x0"},
     "rls_xcslib": {"type", "x0"},
+    "rls_delta": {"type", "x0", "delta"},
     "rls_standard": {"type", "x0", "delta"},
     "lasso_online": {"type", "eta", "x0", "lasso_alpha", "learning_rate_decay"},
     "lasso_batch": {"type", "x0", "lasso_alpha", "window", "max_iter", "tol"},
 }
-CXX_SUPPORTED_TYPES = {"constant", "nlms", "rls_xcslib"}
+CXX_SUPPORTED_TYPES = {"constant", "nlms", "rls_xcslib", "rls_delta"}
 ALLOWED_STUDY = {"description", "implementations", "predictors", "input_representation", "benchmarks"}
 ALLOWED_MONITORING = {"window", "py_grid_checkpoints", "py_unmatched"}
 ALLOWED_ANALYSIS = {"alpha", "n_bootstrap", "last_fraction", "convergence_consecutive_windows",

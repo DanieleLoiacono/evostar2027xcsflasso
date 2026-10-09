@@ -16,6 +16,7 @@ namespace xcsflib
 		PREDICTION_RLS,		//! recursive least squares
 		PREDICTION_RLSK, 	//! recursive least squares with forgetting factor and kalman
 		PREDICTION_VALUE,	//! constant activation function
+		PREDICTION_RLS_DELTA,	//! recursive least squares, V0 = delta*I (Lanzi et al. 2005, Alg. 5)
 	};
 
 	static const map<string,prediction_function_type> prediction_function =
@@ -23,7 +24,8 @@ namespace xcsflib
 		{ "value", prediction_function_type::PREDICTION_VALUE},
 		{ "nlms", prediction_function_type::PREDICTION_NLMS},
 		{ "rls", prediction_function_type::PREDICTION_RLS},
-		{ "rlsk", prediction_function_type::PREDICTION_RLSK}
+		{ "rlsk", prediction_function_type::PREDICTION_RLSK},
+		{ "rls_delta", prediction_function_type::PREDICTION_RLS_DELTA}
 	};
 
 	enum class prediction_function_init_type

@@ -166,6 +166,27 @@ def count_coverings(stderr_path: Path) -> int:
     return n
 
 
+_RLS_DELTA_LOG = re.compile(r"\*\*\* rls_delta: x0 = (\S+) delta = (\S+)")
+
+
+def check_rls_delta_parsed(run_dir: Path, spec: Dict[str, Any]) -> None:
+    """rls_delta_pf logs the x0/delta it parsed on stderr ('-p' does not print predictor sections)."""
+    want = (float(spec["predictor"]["x0"]), float(spec["predictor"]["delta"]))
+    for name in ("stderr.log.gz", "stderr.log", "cxx_params_print.err"):
+        p = run_dir / name
+        if not p.exists():
+            continue
+        m = _RLS_DELTA_LOG.search(_read_text(p))
+        if m:
+            got = (float(m.group(1)), float(m.group(2)))
+            # clog prints 6 significant digits
+            if any(abs(g - w) > 5e-6 * max(1.0, abs(w)) for g, w in zip(got, want)):
+                raise CxxOutputError(f"rls_delta: xcslib parsed x0={got[0]}, delta={got[1]}; expected {want}")
+            return
+    raise CxxOutputError("rls_delta: no '*** rls_delta: x0 = .. delta = ..' line in the xcslib logs "
+                         "(was the binary built with patches/xcslib-rls-delta.patch?)")
+
+
 def validate_run_dir(run_dir: Path, spec: Dict[str, Any]) -> Dict[str, Any]:
     """Fail loudly unless the run directory holds a complete, sane xcslib run."""
     fn = files_for(spec["run_id"])
@@ -183,6 +204,8 @@ def validate_run_dir(run_dir: Path, spec: Dict[str, Any]) -> Dict[str, Any]:
     mism = verify_cxx_print(spec, (run_dir / fn["params_print"]).read_text())
     if mism:
         raise CxxOutputError("xcslib parsed parameters differ from the intended ones:\n  " + "\n  ".join(mism))
+    if spec["predictor"]["type"] == "rls_delta":
+        check_rls_delta_parsed(run_dir, spec)
 
     N, W = spec["xcsf"]["n_learning_problems"], spec["monitoring"]["window"]
     st = parse_statistics(run_dir / fn["statistics"])

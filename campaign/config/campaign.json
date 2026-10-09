@@ -1,5 +1,5 @@
 {
-  "campaign_id": "evostar2027-v1",
+  "campaign_id": "evostar2027-v2",
   "description": "Controlled comparison of xcsf_python-2.0.0 and xcslib-1.5-rc1-niches on continuous 1-D function approximation (single-step, supervised), plus a Python-only Lasso extension.",
 
   "n_runs": 30,
@@ -42,6 +42,7 @@
     "constant":     {"type": "constant", "eta": 0.2},
     "nlms":         {"type": "nlms", "eta": 0.2, "x0": 1.0},
     "rls":          {"type": "rls_xcslib", "x0": 1.0},
+    "rls_delta":    {"type": "rls_delta", "x0": 1.0, "delta": 1000.0},
     "rls_standard": {"type": "rls_standard", "x0": 1.0, "delta": 1000.0},
     "lasso_online": {"type": "lasso_online", "eta": 0.2, "x0": 1.0, "lasso_alpha": [0.001, 0.01, 0.1], "learning_rate_decay": 0.0},
     "lasso_batch":  {"type": "lasso_batch", "x0": 1.0, "lasso_alpha": [0.001, 0.01, 0.1], "window": 256, "max_iter": 1000, "tol": 1e-6}
@@ -51,7 +52,7 @@
     "parity": {
       "description": "Python vs C++ under semantically identical XCSF and predictor settings (raw inputs, as xcslib has no input scaling).",
       "implementations": ["cxx", "py"],
-      "predictors": ["constant", "nlms", "rls"],
+      "predictors": ["constant", "nlms", "rls", "rls_delta"],
       "input_representation": "raw"
     },
     "pyext": {

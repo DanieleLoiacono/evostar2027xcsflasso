@@ -10,5 +10,6 @@
 #include "pf/value.h"
 #include "pf/rls.h"
 #include "pf/rlsk.h"
+#include "pf/rls_delta.h"
 #endif
 #endif

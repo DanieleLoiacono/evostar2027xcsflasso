@@ -52,11 +52,23 @@ generated per-campaign table is `results/<id>/manifest/parity_audit.md`
 | Constant | `prediction function = value`, `<prediction::value> learning rate = η`: `w ← w + η (y − w)` | `prediction="constant"`, `prediction_learning_rate=η`, `initial_prediction=0` | identical update (no MAM on the predictor in either) |
 | NLMS | `nlms`, `learning rate = η`, `x0`: `w ← w + η e φ / (x0² + Σx²)` with φ = [x0, x] | `prediction="nlms"`, `prediction_learning_rate=η`, `x0` | identical update |
 | RLS | `rls`, `x0`. **`delta` is a static never read from confsys → V0 = 0·I**, and the update adds **I** every time: V ← V − K φᵀ V + I | `prediction="rlsk"`, `rls_delta=1e-12` (≈0, the minimum allowed), `process_noise=1`, `forgetting_factor=1`, `kalman_noise=False` | identical recursion (Joseph form = V − Kφᵀ V algebraically). Python `rls` (textbook RLS with V0 = δI, no Q) has **no xcslib counterpart** and is run only in the Python-only study as `rls_standard` |
-| RLSK | `rlsk` exists but `init_prediction_functions` registers it as `PREDICTION_RLS` → selecting it aborts ("function not available") | `rlsk` | excluded from the parity study (would need a library fix) |
+| RLS (paper) | `rls_delta` (added by `patches/xcslib-rls-delta.patch`), `x0`, `delta`: V0 = δI, e = y − wᵀφ, β = 1 + φᵀVφ, V ← V − (Vφ)(Vφ)ᵀ/β, w ← w + (Vφ/β)·e — Lanzi et al. 2005, Alg. 5 | `prediction="rlsk"`, `rls_delta=δ`, `process_noise=0`, `forgetting_factor=1`, `kalman_noise=False` | identical recursion; Python uses the Joseph form of the covariance update (algebraically equal, better rounding). Same estimator in QR form = Python `rls` (`rls_standard`, Python-only). Offspring: weights inherited, V restarted from δI in both |
+| RLSK | `rlsk` exists but `init_prediction_functions` registers it as `PREDICTION_RLS` → selecting it aborts ("function not available"); moreover `x0` is never read and Q multiplies V instead of being added | `rlsk` | excluded from the parity study (not fixed: `rls_delta` covers the paper's RLS) |
 
 `validate` checks these mappings numerically: the Python `LocalPredictor` with the
-campaign settings reproduces a NumPy transcription of `value.cpp`, `nlms.cpp` and
-`rls.cpp` to ≤ 1e-6 relative error on 500-sample sequences.
+campaign settings reproduces a NumPy transcription of `value.cpp`, `nlms.cpp`, `rls.cpp`
+and `rls_delta.cpp` to ≤ 1e-6 relative error on 500-sample sequences (also across an
+offspring/clone). The compiled C++ prediction functions (`nlms`, `rls`, `rls_delta`) are
+driven sample by sample by `campaign/build/bin/pf_driver` and must match the same
+transcriptions to ≤ 1e-9; a short `xcsf-rf` run checks that `rls_delta` and its `delta` are
+actually selected and parsed (every published `rls_delta` run is checked the same way).
+
+**Numerical form of RLS.** On raw inputs x ≈ 1000 with x0 = 1 the autocorrelation matrix of a
+narrow classifier is very ill-conditioned (eigenvalue ratio down to 1e-13). Against a
+quadruple-precision reference (5000 samples, δ ∈ {1e3, 1e6}) the relative weight error is
+≤ 1e-3 for the plain covariance update (paper / xcslib order), ≤ 4e-8 for the Joseph form
+(Python `rlsk`) and ≤ 2e-12 for the QR/Givens form (Python `rls`). The QR form is the
+numerically preferable implementation of the same estimator.
 
 In every xcslib run the `<prediction::nlms>` section must be present (the binary
 refuses to start otherwise); for Constant and RLS runs it is inert and marked as such in
@@ -93,10 +105,12 @@ their effect instead of hiding it. None can be aligned through configuration.
   order: runs are *replicates*, not paired trajectories. Cross-implementation tests are
   therefore unpaired.
 
-## 5. Library modification (the only one)
+## 5. Library modifications (xcslib only)
 
-`campaign/patches/xcslib-benchmark-functions.patch` (applied by
-`scripts/01_apply_cxx_patch.sh`, committed separately with `--commit`):
+Two patches, applied in order by `scripts/01_apply_cxx_patch.sh` and committed separately
+(one commit each) with `--commit`. xcsf_python is not modified.
+
+### 5.1 `campaign/patches/xcslib-benchmark-functions.patch`
 
 1. `real_functions_env.cpp`: add `"min input"`, `"max input"` to
    `configuration_parameters`. **Reason:** `set_parameters()` reads exactly these keys,
@@ -106,7 +120,21 @@ their effect instead of hiding it. None can be aligned through configuration.
    and `sincos2d`, `friedman5` (optional F6, F7). `sine` and `sine3` were already present
    (`scale factor = 100` gives F1–F3 exactly).
 
-The exact diff is stored in every campaign manifest (`manifest/plan_snapshot.json →
+### 5.2 `campaign/patches/xcslib-rls-delta.patch`
+
+**Reason:** the paper's RLS (V0 = δI, no matrix added after the update) is not available in
+xcslib: `rls` never reads `delta` (V0 = 0) and adds I to V at every update (a Kalman filter with
+process noise I, whose gain does not decay and depends on the input scale), and `rlsk` cannot be
+selected (registered as `PREDICTION_RLS`) and never reads `x0`. Rather than changing the
+behaviour of existing predictors, the patch adds a new one:
+
+1. new files `include/xcsf/pf/rls_delta.h`, `src/pf/rls_delta.cpp` (`rls_delta_pf`, section
+   `<prediction::rls_delta>` with required keys `x0` and `delta > 0`; logs the parsed values on
+   stderr; supports `degree`; same print format and clone policy as `rls_pf`);
+2. registration: enum value + name `rls_delta` in `pf/base.h`, include in
+   `pf/prediction_functions.h`, two blocks in `pf/utility.cpp`.
+
+The exact diffs are stored in every campaign manifest (`manifest/plan_snapshot.json →
 patch.patch_text`) together with the hash of both library trees; runs refuse to start if
 either tree changes after planning.
 
@@ -115,4 +143,6 @@ either tree changes after planning.
 `scripts/02_build_cxx.sh` builds the upstream `rf` target (`make/xcsf.make VERSION=-rf
 ACTIONS=dummy_action USERFLAGS=-D__NICHE_TRACKING__`) out of tree with `-O2` instead of
 `-O0 -g` (no `-ffast-math`, assertions kept). Flags, compiler and binary hash are in
-`campaign/build/build_info.json` and in each published run's `DONE.json`.
+`campaign/build/build_info.json` and in each published run's `DONE.json`. The same object
+files (all but `xcsf_main`) are linked with `campaign/tools/pf_driver.cpp` into
+`campaign/build/bin/pf_driver`, the predictor-level test driver used by `validate`.

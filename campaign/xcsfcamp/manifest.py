@@ -16,10 +16,16 @@ from typing import Any, Dict
 
 from .config import CAMPAIGN_DIR, CXX_LIB_DIR, PROJECT_DIR, PY_LIB_DIR
 
-PATCH_FILE = CAMPAIGN_DIR / "patches" / "xcslib-benchmark-functions.patch"
+# xcslib modifications, applied in this order and committed separately (scripts/01_apply_cxx_patch.sh)
+PATCH_FILES = (
+    CAMPAIGN_DIR / "patches" / "xcslib-benchmark-functions.patch",   # benchmark functions + min/max input keys
+    CAMPAIGN_DIR / "patches" / "xcslib-rls-delta.patch",             # prediction::rls_delta (paper's RLS)
+)
+PATCH_FILE = PATCH_FILES[0]   # backwards compatibility
 BUILD_DIR = CAMPAIGN_DIR / "build"
 BUILD_INFO = BUILD_DIR / "build_info.json"
 CXX_BIN = BUILD_DIR / "bin" / "xcsf-rf"
+PF_DRIVER_BIN = BUILD_DIR / "bin" / "pf_driver"
 
 _EXCLUDE_DIRS = {"__pycache__", ".git", "build", "executables", ".vscode", ".pytest_cache", ".mypy_cache"}
 _EXCLUDE_SUFFIX = (".pyc", ".pyo", ".o", ".DS_Store")
@@ -60,25 +66,42 @@ def _cmd(args, cwd=None) -> str:
         return f"<unavailable: {exc}>"
 
 
-def patch_status() -> Dict[str, Any]:
-    """'applied' | 'not-applied' | 'conflict', judged with git apply --check (no changes made)."""
-    out = dict(patch=str(PATCH_FILE), patch_sha256=sha256_file(PATCH_FILE), patch_text=PATCH_FILE.read_text())
+def patches_sha256() -> str:
+    """Combined hash of all xcslib patch files (order-sensitive)."""
+    h = hashlib.sha256()
+    for p in PATCH_FILES:
+        h.update(f"{p.name}\0{sha256_file(p)}\n".encode())
+    return h.hexdigest()
+
+
+def _single_patch_status(path: Path) -> str:
     if shutil.which("git") is None:
-        out["status"] = "unknown (git not found)"
-        return out
-    rev = subprocess.run(["git", "apply", "--check", "--reverse", str(PATCH_FILE)], cwd=PROJECT_DIR,
+        return "unknown (git not found)"
+    rev = subprocess.run(["git", "apply", "--check", "--reverse", str(path)], cwd=PROJECT_DIR,
                          capture_output=True, text=True)
-    fwd = subprocess.run(["git", "apply", "--check", str(PATCH_FILE)], cwd=PROJECT_DIR, capture_output=True, text=True)
-    out["status"] = "applied" if rev.returncode == 0 else ("not-applied" if fwd.returncode == 0 else "conflict")
-    out["working_tree_diff_vs_HEAD"] = _cmd(["git", "diff", "--no-color", "HEAD", "--", CXX_LIB_DIR.name, PY_LIB_DIR.name],
-                                            cwd=PROJECT_DIR)
+    fwd = subprocess.run(["git", "apply", "--check", str(path)], cwd=PROJECT_DIR, capture_output=True, text=True)
+    return "applied" if rev.returncode == 0 else ("not-applied" if fwd.returncode == 0 else "conflict")
+
+
+def patch_status() -> Dict[str, Any]:
+    """Status of every xcslib patch ('applied' | 'not-applied' | 'conflict', judged with git apply --check,
+    no changes made). The overall status is 'applied' only if every patch is applied."""
+    patches = [dict(patch=str(p), name=p.name, sha256=sha256_file(p), text=p.read_text(),
+                    status=_single_patch_status(p)) for p in PATCH_FILES]
+    states = {p["status"] for p in patches}
+    overall = "applied" if states == {"applied"} else ("; ".join(f"{p['name']}: {p['status']}" for p in patches))
+    out = dict(status=overall, patches=patches, patch_sha256=patches_sha256(),
+               patch_text="".join(p["text"] for p in patches))
+    if shutil.which("git") is not None:
+        out["working_tree_diff_vs_HEAD"] = _cmd(["git", "diff", "--no-color", "HEAD", "--", CXX_LIB_DIR.name,
+                                                 PY_LIB_DIR.name], cwd=PROJECT_DIR)
     return out
 
 
 def require_patch_applied():
     st = patch_status()
     if st["status"] != "applied":
-        raise SystemExit(f"[fail] xcslib benchmark patch status: {st['status']}. Run scripts/01_apply_cxx_patch.sh first.")
+        raise SystemExit(f"[fail] xcslib patch status: {st['status']}. Run scripts/01_apply_cxx_patch.sh first.")
 
 
 def git_info() -> Dict[str, Any]:
@@ -112,12 +135,24 @@ def build_info() -> Dict[str, Any] | None:
     return json.loads(BUILD_INFO.read_text())
 
 
+def require_pf_driver() -> Path:
+    """The predictor-level test driver built together with xcsf-rf (scripts/02_build_cxx.sh)."""
+    info = require_cxx_build()
+    if not PF_DRIVER_BIN.exists() or "pf_driver_sha256" not in info:
+        raise SystemExit("[fail] campaign/build/bin/pf_driver missing: rebuild with scripts/02_build_cxx.sh.")
+    if sha256_file(PF_DRIVER_BIN) != info["pf_driver_sha256"]:
+        raise SystemExit("[fail] campaign/build/bin/pf_driver does not match build_info.json; rebuild.")
+    return PF_DRIVER_BIN
+
+
 def require_cxx_build() -> Dict[str, Any]:
     info = build_info()
     if info is None or not CXX_BIN.exists():
         raise SystemExit("[fail] C++ binary missing. Run scripts/02_build_cxx.sh first.")
     if sha256_file(CXX_BIN) != info["binary_sha256"]:
         raise SystemExit("[fail] campaign/build/bin/xcsf-rf does not match build_info.json; rebuild.")
+    if info.get("patch_sha256") != patches_sha256():
+        raise SystemExit("[fail] the xcslib patches changed after the build; rebuild (scripts/02_build_cxx.sh).")
     current = tree_hash(CXX_LIB_DIR)["sha256"]
     if current != info["source_tree_sha256"]:
         raise SystemExit("[fail] xcslib sources changed after the build; rebuild (and start a new campaign id "
