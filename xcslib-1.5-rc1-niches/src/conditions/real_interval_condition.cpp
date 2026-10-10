@@ -358,14 +358,15 @@ real_interval_condition::gaussian_mutation(double mu)
 		if (xcs_random::random () < mu)
 		{
 			lower = lower + m0*(xcs_random::nrandom());
-			value[i].set_lower_bound(lower);
 		}
 
 		if (xcs_random::random () < mu)
 		{
 			upper = upper + m0*(xcs_random::nrandom());
-			value[i].set_upper_bound(lower);
 		}
+
+		//! the two bounds mutate independently; if they cross, they are swapped as in check()
+		value[i] = xcslib::interval<double>(std::min(lower,upper), std::max(lower,upper));
 	}
 }
 
@@ -380,14 +381,15 @@ real_interval_condition::fixed_mutation(double mu)
 		if (xcs_random::random () < mu)
 		{
 			lower = lower + m0*(xcs_random::random()) * xcs_random::sign();
-			value[i].set_lower_bound(lower);
 		}
 
 		if (xcs_random::random () < mu)
 		{
 			upper = upper + m0*(xcs_random::random()) * xcs_random::sign();
-			value[i].set_upper_bound(lower);
 		}
+
+		//! the two bounds mutate independently; if they cross, they are swapped as in check()
+		value[i] = xcslib::interval<double>(std::min(lower,upper), std::max(lower,upper));
 	}
 }
 
