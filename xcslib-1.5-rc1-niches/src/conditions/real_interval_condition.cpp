@@ -623,6 +623,9 @@ real_interval_condition::check(xcslib::interval<double>& it)
 		it.set_upper_bound(lb);	
 	}
 	
+	//! intervals are limited to [min_input, max_input] only when conditions are bounded
+	if (!bounded) return;
+
 	if (it.get_lower_bound()<real_interval_condition::min_input)
 	{
 		it.set_lower_bound(real_interval_condition::min_input);
