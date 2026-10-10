@@ -8,9 +8,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .base import Condition, ConditionRepresentation
+
+MUTATION_METHODS = ("fixed", "proportional", "gaussian")
+CROSSOVER_METHODS = ("one_point", "two_point", "uniform")
+
 
 @dataclass(eq=False)
-class IntervalCondition:
+class IntervalCondition(Condition):
     """Axis-aligned region; lower and upper are independent 1-D float arrays."""
 
     lower: np.ndarray
@@ -109,3 +114,48 @@ class IntervalCondition:
         self._repair(bounds)
         other._repair(bounds)
 
+
+class IntervalMatcher:
+    """Vectorized match queries over the stacked bounds of many interval conditions."""
+
+    def __init__(self, conditions):
+        self.lower = np.array([condition.lower for condition in conditions])
+        self.upper = np.array([condition.upper for condition in conditions])
+
+    def matching(self, x):
+        return np.all((x >= self.lower) & (x <= self.upper), axis=1)
+
+    def distances(self, x):
+        return np.linalg.norm(np.maximum(np.maximum(self.lower - x, x - self.upper), 0), axis=1)
+
+
+class RealIntervalRepresentation(ConditionRepresentation):
+    """Interval conditions with the settings of xcslib's ``<condition::real_interval>``.
+
+    ``cover_radius`` is r0, ``mutation_scale`` is m0. ``bounds`` is an optional
+    (lower, upper) pair of arrays to which every condition is clipped.
+    """
+
+    def __init__(self, cover_radius=0.2, mutation_scale=0.2, mutation="fixed",
+                 crossover="one_point", bounds=None):
+        if mutation not in MUTATION_METHODS:
+            raise ValueError(f"mutation must be one of {MUTATION_METHODS}.")
+        if crossover not in CROSSOVER_METHODS:
+            raise ValueError(f"crossover must be one of {CROSSOVER_METHODS}.")
+        self.cover_radius = cover_radius
+        self.mutation_scale = mutation_scale
+        self.mutation = mutation
+        self.crossover_method = crossover
+        self.bounds = bounds
+
+    def cover(self, x, rng):
+        return IntervalCondition.cover(x, self.cover_radius, rng, self.bounds)
+
+    def mutate(self, condition, probability, rng):
+        condition.mutate(probability, self.mutation_scale, self.mutation, rng, self.bounds)
+
+    def crossover(self, first, second, rng):
+        first.crossover(second, self.crossover_method, rng, self.bounds)
+
+    def matcher(self, conditions):
+        return IntervalMatcher(conditions)

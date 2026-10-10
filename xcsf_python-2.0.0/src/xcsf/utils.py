@@ -58,7 +58,7 @@ def print_population(model, *, precision=4, file=None):
         if i == 0:
             lines.append("-+-".join("-" * width for width in widths))
     if any(rule["prediction"] != "constant" for rule in rules):
-        config = model._core.config
+        config = model._system.config
         basis = [f"x0={number(config.x0)}"] + [
             f"z[{i}]" + (f"**{power}" if power > 1 else "")
             for power in range(1, config.degree + 1) for i in range(model.n_features_in_)

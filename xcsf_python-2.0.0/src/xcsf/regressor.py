@@ -1,15 +1,20 @@
 """scikit-learn estimator for scalar XCSF regression."""
 
 from copy import deepcopy
-from numbers import Integral, Real
 
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import check_is_fitted, validate_data
 
-from .core import XCSFCore, probabilities
-from .prediction import PREDICTION_METHODS, design_matrix
+from .classifier_system import XCSFClassifierSystem, probabilities
+from .environments import DatasetEnvironment
+from .experiments import TrainingMonitor, run_problems
+from .parameters import validate_parameters
+from .prediction import design_matrix
+
+# Parameters that may change between partial_fit calls without invalidating the population.
+_NOT_FROZEN = ("random_state", "n_epochs", "unmatched", "shuffle", "condensation_epochs")
 
 
 class XCSFRegressor(RegressorMixin, BaseEstimator):
@@ -22,16 +27,18 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
     n_epochs : int, default=20
         Passes over the data in fit. partial_fit always performs one pass.
     prediction : str, default='nlms'
-        One of 'lms', 'nlms', 'rls', 'lasso_online', 'lasso_batch', 'rlsk',
-        'constant'. RLS uses QR updates. Lasso uses proximal online updates
-        or coordinate descent on retained local samples, respectively.
+        One of 'constant', 'lms', 'nlms', 'rls', 'lasso_online', 'lasso_sgd',
+        'lasso_batch'. 'rls' is a square-root information (QR) filter.
+        'lasso_online' solves the Lasso exactly on RLS statistics; 'lasso_sgd'
+        is the first-order proximal gradient; 'lasso_batch' refits on a window
+        of retained samples. See docs/prediction-updates.md.
     degree : int, default=1
         Per-feature polynomial powers, without interaction terms.
     learning_rate : float in (0, 1], default=0.2
         Beta: learning rate for error, niche size, and relative accuracy fitness.
     prediction_learning_rate : float in (0, 1], default=0.2
-        Eta for LMS, NLMS, online Lasso and constant prediction. Ignored by
-        RLS/RLSK and batch Lasso. Scale inputs when using LMS or online Lasso.
+        Eta for constant, LMS, NLMS and 'lasso_sgd'. Ignored by RLS,
+        'lasso_online' and 'lasso_batch'. Scale inputs for LMS and 'lasso_sgd'.
     epsilon_0 : float > 0, default=0.05
         Accuracy threshold, in target units. Targets are not normalized.
     alpha : float in (0, 1], default=0.1
@@ -78,30 +85,35 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
         Use sample-average error/set-size updates until experience reaches 1/beta.
     error_before_prediction : bool, default=True
         Estimate error before, rather than after, the local prediction update.
-    rls_delta : float > 0, default=1000.0
-        Initial covariance multiplier for RLS/RLSK, unrelated to deletion delta.
+    rls_delta : float >= 0, default=1000.0
+        Initial covariance V0 = rls_delta * I of 'rls' and 'lasso_online',
+        unrelated to deletion delta. Its inverse is the weight of the prior
+        that ties a rule to its initial or inherited weights. Zero is accepted
+        only by 'rls' with process_noise > 0 (the first sample is then ignored).
     forgetting_factor : float in (0, 1], default=1.0
-        RLS/RLSK forgetting factor. Values below one favor recent observations.
-        In QR RLS it also discounts the initial prior.
+        Forgetting factor of 'rls' and 'lasso_online'. Values below one favor
+        recent observations; the factor also discounts the initial prior.
     process_noise : float >= 0, default=0.0
-        Q in the RLSK covariance update V <- V + Q*I.
+        Q in the 'rls' covariance update V <- V + Q*I after every sample.
     kalman_noise : bool, default=False
-        Use max(rule squared error, 1e-4) as RLSK measurement variance.
+        Use max(rule squared error, 1e-4) as 'rls' measurement variance.
     lasso_alpha : float >= 0, default=0.001
         L1 penalty on slopes (never the intercept), distinct from fitness alpha.
-        Batch objective: mean squared residual / 2 + lasso_alpha * sum(abs(w)).
+        Objective: mean squared residual / 2 + lasso_alpha * sum(abs(w)).
     lasso_window : int >= 1 or None, default=256
-        Maximum observations retained per batch Lasso classifier. None retains
+        Maximum observations retained per 'lasso_batch' classifier. None retains
         all observations since birth. Repeated epochs count as new observations.
     lasso_max_iter : int >= 1, default=1000
-        Maximum coordinate-descent sweeps per batch Lasso update. Failure to
-        meet tolerance emits ConvergenceWarning once per classifier.
+        Maximum coordinate-descent sweeps per 'lasso_online' or 'lasso_batch'
+        update. Failure to meet tolerance emits ConvergenceWarning once per
+        classifier.
     lasso_tol : float > 0, default=1e-6
-        Absolute tolerance on batch Lasso KKT violations, in gradient units.
+        Absolute tolerance on the Lasso KKT violations, in gradient units of
+        the mean objective ('lasso_online' and 'lasso_batch').
     lasso_learning_rate_decay : float in [0, 1], default=0.0
-        Online Lasso step at local update t (starting at 1):
+        'lasso_sgd' step at local update t (starting at 1):
         prediction_learning_rate / t**lasso_learning_rate_decay. Zero uses a
-        constant step. This is a stochastic update, not a batch Lasso solution.
+        constant step. This is a stochastic update, not a Lasso solution.
     x0 : float > 0, default=1.0
         Constant bias input for local predictors.
     normalize : bool, default=True
@@ -232,69 +244,21 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
         self.shuffle = shuffle
         self.random_state = random_state
 
-    def _validate_parameters(self):
-        if self.history_interval is not None:
-            if (isinstance(self.history_interval, (bool, np.bool_))
-                    or not isinstance(self.history_interval, Integral)
-                    or self.history_interval < 1):
-                raise ValueError("history_interval must be a positive integer or None.")
-        if self.lasso_window is not None:
-            if (isinstance(self.lasso_window, (bool, np.bool_))
-                    or not isinstance(self.lasso_window, Integral) or self.lasso_window < 1):
-                raise ValueError("lasso_window must be a positive integer or None.")
-        for name in ("population_size", "n_epochs", "degree", "condensation_epochs", "niche_history", "lasso_max_iter"):
-            value = getattr(self, name)
-            minimum = 0 if name in ("condensation_epochs", "niche_history") else 1
-            if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral) or value < minimum:
-                raise ValueError(f"{name} must be an integer >= {minimum}.")
-        positive = ("learning_rate", "prediction_learning_rate", "epsilon_0", "alpha", "nu",
-                    "cover_radius", "delta", "tournament_fraction", "initial_fitness", "rls_delta",
-                    "forgetting_factor", "x0", "lasso_tol")
-        nonnegative = ("theta_ga", "crossover_probability", "mutation_probability", "mutation_scale",
-                       "theta_delete", "theta_subsume", "theta_match_subsume", "initial_error", "process_noise",
-                       "lasso_alpha", "lasso_learning_rate_decay")
-        unit = ("learning_rate", "prediction_learning_rate", "alpha", "delta", "tournament_fraction",
-                "forgetting_factor", "crossover_probability", "mutation_probability", "lasso_learning_rate_decay")
-        for name in positive + nonnegative + ("initial_prediction",):
-            value = getattr(self, name)
-            if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real) or not np.isfinite(value):
-                raise ValueError(f"{name} must be a finite real number.")
-            if (name in positive and value <= 0) or (name in nonnegative and value < 0):
-                raise ValueError(f"{name} is outside its valid range.")
-            if name in unit and value > 1:
-                raise ValueError(f"{name} must be <= 1.")
-        for name in ("ga_subsumption", "match_subsumption", "use_mam", "error_before_prediction",
-                     "kalman_noise", "normalize", "bounded", "discovery", "shuffle"):
-            if not isinstance(getattr(self, name), (bool, np.bool_)):
-                raise ValueError(f"{name} must be boolean.")
-        for name, choices in {
-            "prediction": PREDICTION_METHODS,
-            "mutation": ("fixed", "proportional", "gaussian"),
-            "crossover": ("one_point", "two_point", "uniform"),
-            "selection": ("roulette", "tournament"),
-            "unmatched": ("nearest", "mean", "raise"),
-        }.items():
-            if getattr(self, name) not in choices:
-                raise ValueError(f"{name} must be one of {choices}.")
-        check_random_state(self.random_state)
-
     def _initialize(self, X):
         self.feature_offset_ = X.min(axis=0) if self.normalize else np.zeros(X.shape[1])
         self.feature_scale_ = np.ptp(X, axis=0) if self.normalize else np.ones(X.shape[1])
         self.feature_scale_[self.feature_scale_ < 10 * np.finfo(float).eps] = 1.0
         transformed = self._transform(X)
-        bounds = (transformed.min(axis=0), transformed.max(axis=0)) if self.bounded else None
+        self._bounds = (transformed.min(axis=0), transformed.max(axis=0)) if self.bounded else None
         self._rng = check_random_state(self.random_state)
         self._training_parameters = {k: deepcopy(v) for k, v in self.get_params().items()
-                                     if k not in ("random_state", "n_epochs", "unmatched", "shuffle", "condensation_epochs")}
-        self._core = XCSFCore(self.get_params(), self._rng, bounds)
-        self.population_ = self._core.population
+                                     if k not in _NOT_FROZEN}
+        self._system = XCSFClassifierSystem(self.get_params(), self._rng, bounds=self._bounds)
+        self._monitor = TrainingMonitor(self.history_interval)
+        self.population_ = self._system.population
         self.history_ = []
-        self.performance_history_ = []
-        self._performance_count = 0
-        self._performance_absolute_error = 0.0
-        self._performance_squared_error = 0.0
-        self.stats_ = self._core.stats
+        self.performance_history_ = self._monitor.records
+        self.stats_ = self._system.stats
         self.n_iter_ = 0
         self.n_samples_seen_ = 0
         self.target_mean_ = 0.0
@@ -304,8 +268,9 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
     def _transform(self, X):
         return (X - self.feature_offset_) / self.feature_scale_
 
-    def _training_data(self, X, y, *, reset):
-        self._validate_parameters()
+    def _training_environment(self, X, y, *, reset, shuffle):
+        """Validate the batch and wrap it as the environment of the next pass(es)."""
+        validate_parameters(self.get_params())
         if not reset:
             for name, value in self._training_parameters.items():
                 if getattr(self, name) != value:
@@ -315,65 +280,48 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
             self._initialize(X)
         X = self._transform(X)
         if self.bounded:
-            lower, upper = self._core.bounds
+            lower, upper = self._bounds
             if np.any((X < lower) | (X > upper)):
                 raise ValueError("Training inputs exceed the frozen bounds; use bounded=False or refit.")
-        return X, y, design_matrix(X, self.degree, self.x0)
+        return DatasetEnvironment(X, y, features=design_matrix(X, self.degree, self.x0),
+                                  shuffle=shuffle, rng=self._rng)
 
-    def _pass(self, X, y, phi, *, shuffle, condensation=False):
-        order = self._rng.permutation(len(X)) if shuffle else np.arange(len(X))
-        error_sum = 0.0
-        absolute_error_sum = 0.0
-        # The tail is a snapshot of a still-open window. Keep its accumulators
-        # across epochs/partial_fit calls and replace the snapshot as it grows.
-        if self.performance_history_ and not self.performance_history_[-1]["complete"]:
-            self.performance_history_.pop()
-        for i in order:
-            prediction = self._core.update(X[i], y[i], phi[i], condensation=condensation)
-            error = y[i] - prediction
-            error_sum += error ** 2
-            absolute_error_sum += abs(error)
+    def _pass(self, environment, *, condensation=False):
+        """One pass over the environment, recording the online (pre-update) error."""
+        system, monitor = self._system, self._monitor
+        totals = dict(squared=0.0, absolute=0.0)
+
+        def record(prediction, target):
+            error = target - prediction
+            totals["squared"] += error ** 2
+            totals["absolute"] += abs(error)
             self.n_samples_seen_ += 1
-            self.target_mean_ += (y[i] - self.target_mean_) / self.n_samples_seen_
-            if self.history_interval is not None:
-                self._performance_count += 1
-                self._performance_absolute_error += abs(error)
-                self._performance_squared_error += error ** 2
-                if self._performance_count == self.history_interval:
-                    self._record_performance(complete=True)
-                    self._performance_count = 0
-                    self._performance_absolute_error = 0.0
-                    self._performance_squared_error = 0.0
+            self.target_mean_ += (target - self.target_mean_) / self.n_samples_seen_
+            monitor.add(error, self.n_samples_seen_, system)
+
+        n = len(environment)
+        monitor.begin_pass()
+        run_problems(system, environment, n, condensation=condensation, on_problem=record)
+        monitor.end_pass(self.n_samples_seen_, system)
         self.n_iter_ += 1
-        self.n_microclassifiers_ = self._core.numerosity
+        self.n_microclassifiers_ = system.numerosity
         self.n_macroclassifiers_ = len(self.population_)
-        self._core.condition_arrays()
-        if self._performance_count:
-            self._record_performance(complete=False)
-        self.history_.append(dict(epoch=self.n_iter_, step=self.n_samples_seen_, n_samples=len(X),
-                                  mae=float(absolute_error_sum / len(X)),
-                                  mse=float(error_sum / len(X)), rmse=float(np.sqrt(error_sum / len(X))),
+        system.matcher()  # build the match cache now, so that predict leaves the model untouched
+        mse = totals["squared"] / n
+        self.history_.append(dict(epoch=self.n_iter_, step=self.n_samples_seen_, n_samples=n,
+                                  mae=float(totals["absolute"] / n),
+                                  mse=float(mse), rmse=float(np.sqrt(mse)),
                                   macroclassifiers=self.n_macroclassifiers_,
                                   microclassifiers=self.n_microclassifiers_,
                                   condensation=condensation))
 
-    def _record_performance(self, *, complete):
-        count = self._performance_count
-        mse = float(self._performance_squared_error / count)
-        self.performance_history_.append(dict(
-            step=self.n_samples_seen_, n_samples=count,
-            mae=float(self._performance_absolute_error / count), mse=mse, rmse=float(np.sqrt(mse)),
-            macroclassifiers=len(self.population_), microclassifiers=self._core.numerosity,
-            complete=complete,
-        ))
-
     def fit(self, X, y):
         """Reset and learn from (n_samples, n_features) X and scalar targets y."""
-        X, y, phi = self._training_data(X, y, reset=True)
+        environment = self._training_environment(X, y, reset=True, shuffle=self.shuffle)
         for _ in range(self.n_epochs):
-            self._pass(X, y, phi, shuffle=self.shuffle)
+            self._pass(environment)
         for _ in range(self.condensation_epochs):
-            self._pass(X, y, phi, shuffle=self.shuffle, condensation=True)
+            self._pass(environment, condensation=True)
         return self
 
     def partial_fit(self, X, y):
@@ -383,8 +331,9 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
         consistently scaled inputs when these should be controlled externally.
         Evolutionary parameters cannot be changed during an incremental run.
         """
-        X, y, phi = self._training_data(X, y, reset=not hasattr(self, "_core"))
-        self._pass(X, y, phi, shuffle=False)
+        environment = self._training_environment(X, y, reset=not hasattr(self, "_system"),
+                                                 shuffle=False)
+        self._pass(environment)
         return self
 
     def _prediction_data(self, X):
@@ -395,19 +344,20 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
     def predict(self, X):
         """Predict scalar targets without modifying population, statistics, or RNG."""
         X = self._prediction_data(X)
-        phi = design_matrix(X, self._core.config.degree, self._core.config.x0)
-        lower, upper = self._core.condition_arrays()
+        config = self._system.config
+        phi = design_matrix(X, config.degree, config.x0)
+        matcher = self._system.matcher()
         fitness = np.array([cl.fitness for cl in self.population_])
         result = np.empty(len(X))
         for i, x in enumerate(X):
-            mask = np.all((x >= lower) & (x <= upper), axis=1)
+            mask = matcher.matching(x)
             if not mask.any():
                 if self.unmatched == "raise":
                     raise ValueError(f"No classifier matches prediction sample {i}.")
                 if self.unmatched == "mean":
                     result[i] = self.target_mean_
                     continue
-                distances = np.linalg.norm(np.maximum(np.maximum(lower - x, x - upper), 0), axis=1)
+                distances = matcher.distances(x)
                 mask = distances == distances.min()
             indices = np.flatnonzero(mask)
             values = [self.population_[j].predictor.predict(phi[i]) for j in indices]
@@ -436,11 +386,7 @@ class XCSFRegressor(RegressorMixin, BaseEstimator):
             upper=cl.condition.upper * self.feature_scale_ + self.feature_offset_,
             weights=cl.predictor.weights.copy(), value=cl.predictor.value,
             prediction=cl.predictor.method, fitness=cl.fitness, error=cl.error,
-            prediction_diagnostics=dict(
-                n_updates=cl.predictor.n_updates_, n_samples=cl.predictor.n_samples_,
-                n_iter=cl.predictor.n_iter_, converged=cl.predictor.converged_,
-                kkt_violation=cl.predictor.kkt_violation_,
-            ),
+            prediction_diagnostics=cl.predictor.diagnostics(),
             squared_error=cl.squared_error, numerosity=cl.numerosity,
             experience=cl.experience, set_size=cl.set_size,
             timestamp=cl.timestamp, created_at=cl.created_at, last_match=cl.last_match,

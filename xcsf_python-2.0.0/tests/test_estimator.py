@@ -16,7 +16,8 @@ from xcsf import XCSFRegressor
 
 
 @parametrize_with_checks([XCSFRegressor(random_state=0),
-                          XCSFRegressor(prediction="rls", n_epochs=3, random_state=0)])
+                          XCSFRegressor(prediction="rls", n_epochs=3, random_state=0),
+                          XCSFRegressor(prediction="lasso_online", n_epochs=3, random_state=0)])
 def test_sklearn_estimator(estimator, check):
     check(estimator)
 
@@ -117,7 +118,7 @@ def test_bounded_online_rejects_out_of_domain_but_predicts():
     assert np.isfinite(model.predict([[2]])).all()
 
 
-@pytest.mark.parametrize("prediction", ["nlms", "rls", "rlsk", "constant"])
+@pytest.mark.parametrize("prediction", ["nlms", "rls", "lasso_online", "constant"])
 def test_constant_input_target_and_single_sample(prediction):
     model = XCSFRegressor(prediction=prediction, n_epochs=50, random_state=1, bounded=True)
     model.fit([[3., 3.]], [7.])
@@ -130,6 +131,7 @@ def test_constant_input_target_and_single_sample(prediction):
     ("crossover_probability", 1.1), ("mutation_probability", -0.1),
     ("initial_fitness", 0), ("x0", 0), ("normalize", "yes"),
     ("tournament_fraction", 0), ("forgetting_factor", 0), ("process_noise", -1),
+    ("rls_delta", -1), ("prediction", "rlsk"),
 ])
 def test_invalid_parameters(name, value):
     with pytest.raises(ValueError, match=name):
@@ -197,7 +199,7 @@ def test_alternative_operators_and_kalman_train_with_condensation(mutation, sele
     rng = np.random.RandomState(10)
     X = rng.uniform(size=(150, 2))
     y = 0.2 + X[:, 0] - 2 * X[:, 1]
-    model = XCSFRegressor(prediction="rlsk", process_noise=0.001,
+    model = XCSFRegressor(prediction="rls", process_noise=0.001,
                           forgetting_factor=0.99, kalman_noise=True,
                           selection=selection, mutation=mutation,
                           match_subsumption=True, theta_match_subsume=5,
@@ -211,8 +213,9 @@ def test_alternative_operators_and_kalman_train_with_condensation(mutation, sele
         assert np.linalg.eigvalsh(cl.predictor.covariance).min() > -1e-10
 
 
-@pytest.mark.parametrize("prediction", ["lms", "nlms", "rls", "lasso_online", "lasso_batch"])
-def test_v2_predictors_incremental_pickle_clone_and_genetics(prediction):
+@pytest.mark.parametrize("prediction", ["constant", "lms", "nlms", "rls", "lasso_online",
+                                        "lasso_sgd", "lasso_batch"])
+def test_predictors_incremental_pickle_clone_and_genetics(prediction):
     rng = np.random.default_rng(12)
     X = rng.uniform(-1, 1, (70, 2))
     y = .7 + X @ [1.5, -.5]
@@ -241,7 +244,7 @@ def test_v2_predictors_incremental_pickle_clone_and_genetics(prediction):
         assert all(cl.predictor.n_samples_ <= 16 for cl in batch.population_)
 
 
-@pytest.mark.parametrize("prediction", ["lms", "lasso_online", "lasso_batch"])
+@pytest.mark.parametrize("prediction", ["lms", "lasso_online", "lasso_sgd", "lasso_batch"])
 def test_new_predictors_learn_a_linear_function(prediction):
     rng = np.random.default_rng(32)
     X = rng.uniform(-1, 1, (150, 2))
@@ -260,19 +263,19 @@ def test_new_predictors_learn_a_linear_function(prediction):
     ("lasso_tol", np.inf), ("lasso_learning_rate_decay", -1),
     ("lasso_learning_rate_decay", 1.1),
 ])
-def test_v2_invalid_parameters(name, value):
+def test_lasso_invalid_parameters(name, value):
     with pytest.raises(ValueError, match=name):
         XCSFRegressor(**{name: value}).fit([[0], [1]], [0, 1])
 
 
-@pytest.mark.parametrize("prediction", ["lasso_online", "lasso_batch"])
+@pytest.mark.parametrize("prediction", ["lasso_online", "lasso_sgd", "lasso_batch"])
 def test_lasso_parameters_frozen_during_partial_fit(prediction):
     model = XCSFRegressor(prediction=prediction).partial_fit([[0], [1]], [0, 1])
     model.set_params(lasso_alpha=.5)
     with pytest.raises(ValueError, match="lasso_alpha changed"):
         model.partial_fit([[.5]], [.5])
     model.fit([[0], [1]], [0, 1])
-    assert model.population_[0].predictor.lasso_alpha == .5
+    assert model.population_[0].predictor.alpha == .5
 
 
 def test_lasso_grid_search_uses_public_parameters():
@@ -282,3 +285,27 @@ def test_lasso_grid_search_uses_public_parameters():
                           {"lasso_alpha": [.001, .01], "lasso_window": [16, None]}, cv=2)
     search.fit(X, 2 + X[:, 0])
     assert search.best_score_ > .95
+
+
+def test_rls_zero_initial_covariance_requires_process_noise():
+    X = np.linspace(0, 1, 40).reshape(-1, 1)
+    model = XCSFRegressor(prediction="rls", rls_delta=0., process_noise=1., n_epochs=3,
+                          random_state=0).fit(X, 2 + X[:, 0])
+    assert model.score(X, 2 + X[:, 0]) > .95
+    with pytest.raises(ValueError, match="rls_delta"):
+        XCSFRegressor(prediction="lasso_online", rls_delta=0., process_noise=1.).fit(X, X[:, 0])
+
+
+def test_online_lasso_learns_sparse_local_models_faster_than_its_gradient_version():
+    rng = np.random.RandomState(3)
+    X = rng.uniform(size=(3000, 2))
+    y = np.sin(2 * np.pi * X[:, 0])  # the second feature is irrelevant
+    kwargs = dict(n_epochs=1, shuffle=False, normalize=False, lasso_alpha=.001,
+                  history_interval=1000, random_state=0)
+    online = XCSFRegressor(prediction="lasso_online", **kwargs).fit(X, y)
+    gradient = XCSFRegressor(prediction="lasso_sgd", **kwargs).fit(X, y)
+    assert online.performance_history_[-1]["mae"] < .5 * gradient.performance_history_[-1]["mae"]
+    experienced = [cl for cl in online.population_ if cl.experience > 20]
+    zero = np.mean([cl.predictor.weights[1:] == 0 for cl in experienced], axis=0)
+    assert zero[1] > .7 and zero[0] < .3  # sparse where it should be, not everywhere
+    assert all(cl.predictor.n_samples_ == 0 for cl in online.population_)

@@ -2,16 +2,16 @@ import numpy as np
 from numpy.testing import assert_allclose
 import pytest
 
-from xcsf import Classifier, IntervalCondition, LocalPredictor, XCSFRegressor
-from xcsf.core import XCSFCore
+from xcsf import (Classifier, DummyAction, IntervalCondition, RealIntervalRepresentation,
+                  XCSFClassifierSystem, XCSFRegressor, make_predictor)
 
 
 def core(**kwargs):
-    return XCSFCore(XCSFRegressor(**kwargs).get_params(), np.random.RandomState(2))
+    return XCSFClassifierSystem(XCSFRegressor(**kwargs).get_params(), np.random.RandomState(2))
 
 
 def rule(lower=0, upper=1, *, fitness=0.01, numerosity=1, error=0, experience=0):
-    return Classifier(IntervalCondition([lower], [upper]), LocalPredictor(2),
+    return Classifier(IntervalCondition([lower], [upper]), make_predictor("nlms", 2),
                       fitness=fitness, numerosity=numerosity, error=error, experience=experience)
 
 
@@ -20,7 +20,7 @@ def test_error_fitness_and_set_size_hand_calculation():
     a, b = rule(numerosity=2), rule()
     b.predictor.weights[0] = 1
     engine.population.extend([a, b])
-    engine.update(np.array([0.5]), 1, np.array([1., 0.5]))
+    engine.step(np.array([0.5]), 1, np.array([1., 0.5]))
     assert_allclose([a.error, b.error], [1, 0])
     assert_allclose([a.set_size, b.set_size], [3, 3])
     assert_allclose([a.experience, b.experience], [1, 1])
@@ -34,7 +34,7 @@ def test_post_update_error_and_non_mam():
     engine = core(discovery=False, use_mam=False, error_before_prediction=False)
     a = rule()
     engine.population.append(a)
-    engine.update(np.array([0.5]), 1, np.array([1., 0.5]))
+    engine.step(np.array([0.5]), 1, np.array([1., 0.5]))
     assert_allclose(a.error, 0.2 * 0.8)
     assert_allclose(a.squared_error, 0.2 * 0.8**2)
 
@@ -42,7 +42,7 @@ def test_post_update_error_and_non_mam():
 def test_prediction_does_not_double_count_numerosity():
     a, b = rule(fitness=0.25, numerosity=20), rule(fitness=0.75)
     a.predictor.weights[0], b.predictor.weights[0] = 2, 6
-    assert_allclose(XCSFCore.aggregate([a, b], np.array([1., 0.5])), 5)
+    assert_allclose(XCSFClassifierSystem.system_prediction([a, b], np.array([1., 0.5])), 5)
 
 
 def test_deletion_uses_per_micro_fitness_and_experience():
@@ -71,7 +71,7 @@ def test_match_subsumption_preserves_population_numerosity():
     engine = core(match_subsumption=True, theta_match_subsume=10)
     a, b = rule(experience=11), rule(0.2, 0.8, numerosity=3)
     engine.population.extend([a, b])
-    assert engine._subsume_match_set([a, b]) == [a]
+    assert engine._subsume_action_set([a, b]) == [a]
     assert engine.population == [a] and a.numerosity == 4
 
 
@@ -91,7 +91,7 @@ def test_ga_age_is_numerosity_weighted():
     a.timestamp, b.timestamp = 10, 0
     engine.population.extend([a, b])
     engine.time = 10
-    engine.update(np.array([0.5]), 0, np.array([1., 0.5]))
+    engine.step(np.array([0.5]), 0, np.array([1., 0.5]))
     assert engine.stats["ga_runs"] == 0  # average age 11 - 9 = 2
 
 
@@ -147,3 +147,48 @@ def test_cover_matches_boundaries_and_constant_features():
     assert condition.matches(x)
     assert not condition.matches([0, 1.01, 0.5])
 
+
+
+def test_step_computes_prediction_inputs_when_the_environment_gives_none():
+    a, b = core(discovery=False, degree=2, x0=.5), core(discovery=False, degree=2, x0=.5)
+    x = np.array([0.3])
+    assert a.step(x, 1.) == b.step(x, 1., np.array([.5, .3, .09]))
+    assert_allclose(a.population[0].predictor.weights, b.population[0].predictor.weights)
+    assert len(a.population[0].predictor.weights) == 3
+
+
+def test_classifiers_carry_the_single_dummy_action():
+    engine = core(discovery=False)
+    engine.step(np.array([0.5]), 1.)
+    assert engine.population[0].action == engine.action == DummyAction()
+    assert rule().same_rule_as(rule()) and rule(-1, 2).is_more_general_than(rule())
+    assert not rule().is_more_general_than(rule(-1, 2))
+
+
+def test_system_reaches_conditions_only_through_the_representation():
+    calls = []
+
+    class Recording(RealIntervalRepresentation):
+        def cover(self, x, rng):
+            calls.append("cover")
+            return super().cover(x, rng)
+
+        def mutate(self, condition, probability, rng):
+            calls.append("mutate")
+            super().mutate(condition, probability, rng)
+
+        def crossover(self, first, second, rng):
+            calls.append("crossover")
+            super().crossover(first, second, rng)
+
+        def matcher(self, conditions):
+            calls.append("matcher")
+            return super().matcher(conditions)
+
+    parameters = XCSFRegressor(theta_ga=0, crossover_probability=1., ga_subsumption=False).get_params()
+    engine = XCSFClassifierSystem(parameters, np.random.RandomState(0),
+                                  representation=Recording(cover_radius=.3))
+    for x in np.linspace(0, 1, 20):
+        engine.step(np.array([x]), x)
+    assert {"cover", "mutate", "crossover", "matcher"} <= set(calls)
+    assert all(cl.condition.upper[0] - cl.condition.lower[0] <= 2 for cl in engine.population)

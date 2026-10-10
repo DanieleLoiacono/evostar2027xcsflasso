@@ -1,6 +1,94 @@
 # Verifica della reimplementazione
 
-## Versione 2.0 — 1 ottobre 2026
+## Versione 2.1 — 10 ottobre 2026
+
+Ambiente: Python 3.14.4, NumPy 2.5.3, SciPy 1.18.1,
+scikit-learn 1.9.1. Versione della libreria: 2.1.0.
+
+La 2.1 riorganizza il pacchetto in componenti separati
+([architecture.md](architecture.md)), unifica RLS e introduce il Lasso online
+ricorsivo ([prediction-updates.md](prediction-updates.md)).
+
+### Suite di test
+
+Comando: `python -m pytest tests -q`.
+
+**344 test superati, 3 saltati.** I tre skip sono i controlli opzionali Array API
+di scikit-learn (`SCIPY_ARRAY_API` non impostato), uno per ciascuno dei tre
+estimatori sottoposti ai controlli ufficiali (NLMS, RLS, Lasso online).
+
+Che cosa viene verificato per i predittori:
+
+- **RLS**: soluzione dei minimi quadrati regolarizzati (equazioni normali e SVD
+  del sistema aumentato, con prior non nullo e oblio); ricorsione di Kalman in
+  forma di covarianza in tutte le modalità (oblio, rumore di processo, varianza
+  di misura), su pesi e covarianza; caso `rls_delta=0, process_noise=1` contro la
+  trascrizione di `rls.cpp` di xcslib; feature grandi quasi collineari;
+  ingressi traslati (x ≈ 1000, regola larga 1) contro un riferimento in
+  aritmetica razionale esatta, con errore relativo sui pesi ≤ 1e-10.
+- **Lasso online**: coincide con `sklearn.linear_model.Lasso` su tutta la storia
+  (1 e 4 feature); soddisfa le condizioni KKT dell'obiettivo documentato con
+  prior e oblio; con penalità nulla coincide bit per bit con RLS; converge come
+  RLS e non come il gradiente prossimale; segnala la mancata convergenza.
+- **Lasso batch**: confronto con scikit-learn su finestra e storia completa, bias
+  non penalizzato, colonne costanti/duplicate, penalità nulla, KKT.
+- **Lasso SGD**: passo prossimale calcolato a mano; con L1 = 0 coincide con LMS.
+- Per tutti: eredità dei pesi senza condivisione di stato, impostazioni ereditate,
+  campioni non validi che non alterano lo stato, parametri non validi rifiutati.
+
+Per il resto del pacchetto: ambienti (ordine, rimescolamento, dominio continuo),
+ciclo dell'esperimento, uso del sistema senza scikit-learn, equivalenza tra
+`fit` e il ciclo esplicito su `DatasetEnvironment`, accesso alle condizioni solo
+tramite la rappresentazione, oltre ai test già presenti su update, GA,
+subsumption, cancellazione, API scikit-learn, pickle e storia di training.
+
+### Confronto con la versione 2.0
+
+Dodici configurazioni (tutti i predittori; operatori di mutazione, crossover e
+selezione alternativi; `degree=2`; condizioni limitate; subsumption del match
+set; condensazione), ciascuna con ingressi a 1 e 2 dimensioni, eseguite con la
+2.0 e con la 2.1 a parità di seme:
+
+| predittore 2.0 → 2.1 | popolazione e statistiche | predizioni e curva di errore |
+|---|---|---|
+| `constant`, `lms`, `nlms`, `rls`, `lasso_batch` | identiche | identiche bit per bit |
+| `lasso_online` → `lasso_sgd` | identiche | identiche bit per bit |
+| `rlsk` → `rls` (tre impostazioni: Q = 0; V0 ≈ 0 con Q = 1; oblio + Q + varianza adattiva) | identiche | differenza massima 1,3e-11 |
+
+Il refactoring non ha quindi modificato l'algoritmo evolutivo né i predittori
+invariati; il nuovo `rls` riproduce il vecchio `rlsk`.
+
+### Confronto dei predittori isolati
+
+Comando: `python examples/prediction_comparison.py --output docs/prediction-benchmark.json`.
+
+*Problema lineare sparso.* Un solo seed (42), 600 campioni di training e 400 di
+test indipendenti, 6 feature uniformi in [-1, 1], tre pendenze realmente non
+nulle, rumore gaussiano sigma = 0,05 solo sul training. Cinque passate, 3.000
+update per predittore, stesso ordine. Passo 0,03 per `lms` e `lasso_sgd`, 0,2 per
+`nlms` e `constant`; L1 = 0,01; `rls_delta` = 1000; finestra batch 256.
+
+| Metodo | RMSE test | Pendenze non nulle | Campioni conservati | Byte degli array persistenti |
+|---|---:|---:|---:|---:|
+| constant | 1.402797 | 0 | 0 | 56 |
+| lms | 0.010192 | 6 | 0 | 56 |
+| nlms | 0.015727 | 6 | 0 | 56 |
+| rls | 0.003883 | 6 | 0 | 504 |
+| lasso_online | 0.028641 | 3 | 0 | 504 |
+| lasso_sgd | 0.026740 | 5 | 0 | 56 |
+| lasso_batch | 0.025898 | 3 | 256 | 14392 |
+
+`lasso_online` e `lasso_batch` selezionano le tre feature reali; `lasso_sgd` a
+passo costante conserva anche piccoli coefficienti residui. `lasso_online` non
+conserva campioni: il suo stato è quello di RLS. Il bias dei tre Lasso rispetto
+a RLS è quello atteso dalla penalizzazione. Tempi e risultati sono una misura
+su questo ambiente con iperparametri non ottimizzati, non una classifica.
+
+*Convergenza dentro una regola.* Tabella e commento in
+[prediction-updates.md](prediction-updates.md), §7.1. Dati completi:
+[prediction-benchmark.json](prediction-benchmark.json).
+
+## Archivio: versione 2.0 — 1 ottobre 2026
 
 Ambiente: Python 3.14.4, NumPy 2.5.3, SciPy 1.18.1,
 scikit-learn 1.9.1. Versione della libreria: 2.0.0.
@@ -24,7 +112,7 @@ un aggiornamento prossimale calcolato indipendentemente e contro LMS con L1=0.
 
 ### Confronto dei predictor isolati
 
-Comando: `python examples/prediction_comparison.py --output docs/prediction-benchmark-v2.json`.
+Comando (2.0): `python examples/prediction_comparison.py --output docs/prediction-benchmark-v2.json`.
 
 Un solo seed (42), 600 campioni di training e 400 di test indipendenti,
 6 feature uniformi in [-1, 1], tre pendenze realmente non nulle, rumore gaussiano
@@ -49,8 +137,9 @@ penalizzazione; in questa esecuzione il batch seleziona le tre feature reali,
 mentre l'online a passo costante conserva anche piccoli coefficienti residui.
 Il solver batch finale soddisfa la tolleranza KKT richiesta.
 
-Dati completi: [prediction-benchmark-v2.json](prediction-benchmark-v2.json).
-Implementazione e limiti: [prediction-v2.md](prediction-v2.md).
+Il file dei dati di questa esecuzione è stato rigenerato con la 2.1 (sezione
+precedente); in questa tabella `lasso_online` è il predittore che la 2.1 chiama
+`lasso_sgd`.
 
 ### Pacchetto distribuibile
 

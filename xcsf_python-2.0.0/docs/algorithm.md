@@ -1,8 +1,9 @@
 # Algoritmo, corrispondenza con xcslib e scelte del port
 
-La versione 2.0 sostituisce gli aggiornamenti dei predictor e aggiunge LMS e due
-varianti Lasso. Vedere [prediction-v2.md](prediction-v2.md) per le formule
-implementate, i parametri e le differenze di compatibilità.
+Questo documento descrive il ciclo di apprendimento e le scelte del port rispetto
+a xcslib. La struttura del codice è in [architecture.md](architecture.md); la
+teoria degli aggiornamenti dei predittori in
+[prediction-updates.md](prediction-updates.md).
 
 ## Riferimenti utilizzati
 
@@ -62,14 +63,17 @@ I percorsi C++ nella tabella sono relativi a `xcslib-1.5-rc1-niches/`.
 
 | Sorgente C++ | Implementazione Python | Contenuto |
 |---|---|---|
-| `src/conditions/real_interval_condition.cpp` | `src/xcsf/conditions.py` | Covering, matching, contenimento, crossover, mutazione |
-| `src/xcsf/xcsf_classifier.cpp` | `src/xcsf/rule.py` | Stato, numerosity, copia, esperienza e cronologia delle nicchie |
-| `src/xcsf/xcsf_classifier_system.cpp` | `src/xcsf/core.py` | Update, fitness, GA, selezione, subsumption, cancellazione, condensazione |
-| `src/pf/base.cpp` | `src/xcsf/prediction.py:design_matrix` | Basi polinomiali senza interazioni |
-| `src/pf/nlms.cpp` | `src/xcsf/prediction.py:LocalPredictor` | NLMS: `w += eta * (y - phi@w) * phi / (phi@phi)` |
-| `src/pf/value.cpp` | stesso modulo, `constant` | Predizione costante aggiornata con passo eta |
-| `src/pf/rls.cpp`, `src/pf/rlsk.cpp` | stesso modulo, `rls` e `rlsk` | Minimi quadrati ricorsivi e variante con covarianza/forgetting |
-| Gestione degli esperimenti / ambiente | `src/xcsf/regressor.py` | Sostituita da fit su dataset e aggiornamento incrementale |
+| `src/conditions/real_interval_condition.cpp` | `src/xcsf/conditions/real_interval.py` | Covering, matching, contenimento, crossover, mutazione |
+| `src/actions/dummy_action.cpp` | `src/xcsf/actions/dummy.py` | Azione implicita unica della regressione |
+| `src/environments/real_functions_env.cpp` | `src/xcsf/environments/` | Problemi a passo singolo: funzione campionata o righe di un dataset |
+| `src/xcsf/xcsf_classifier.cpp` | `src/xcsf/classifier.py` | Stato, numerosity, copia, esperienza e cronologia delle nicchie |
+| `src/xcsf/xcsf_classifier_system.cpp` | `src/xcsf/classifier_system.py` | Update, fitness, GA, selezione, subsumption, cancellazione, condensazione |
+| `src/pf/base.cpp` | `src/xcsf/prediction/base.py` | Interfaccia dei predittori, basi polinomiali senza interazioni |
+| `src/pf/nlms.cpp` | `src/xcsf/prediction/lms.py` | NLMS: `w += eta * (y - phi@w) * phi / (phi@phi)` (e LMS) |
+| `src/pf/value.cpp` | `src/xcsf/prediction/constant.py` | Predizione costante aggiornata con passo eta |
+| `src/pf/rls.cpp`, `src/pf/rlsk.cpp`, `src/pf/rls_delta.cpp` | `src/xcsf/prediction/rls.py` | Un solo RLS, in forma QR, che copre le tre varianti |
+| – | `src/xcsf/prediction/lasso.py` | Lasso ricorsivo, a gradiente prossimale e su finestra |
+| `src/experiments/experiment_mgr2.cpp` | `src/xcsf/experiments.py`, `src/xcsf/regressor.py` | Ciclo ambiente → sistema; fit su dataset e aggiornamento incrementale |
 
 ### Parametri delle configurazioni fornite
 
@@ -90,7 +94,7 @@ I percorsi C++ nella tabella sono relativi a `xcslib-1.5-rc1-niches/`.
 | offspring selection for GA | selection e tournament_fraction |
 | prediction function = value | prediction="constant" |
 | prediction function / degree / x0 | prediction / degree / x0 |
-| delta, prediction::rlsk | rls_delta |
+| delta, prediction::rlsk / prediction::rls_delta | rls_delta |
 | lambda / Q / kalman | forgetting_factor / process_noise / kalman_noise |
 | number of condensation problems | condensation_epochs × numero di campioni |
 | niche queue max size | niche_history |
@@ -102,33 +106,27 @@ mutazione=0.04, `epsilon_0=0.05`, r0=m0=0.2, GA subsumption attiva;
 già generati nel dominio `[0, 1]` e scegliere `n_epochs` in funzione del numero
 di aggiornamenti desiderato. La libreria non interpreta i file confsys.
 
-## Predittori RLS e RLSK
+## Predittore RLS
 
-`rls` nella 2.0 usa una fattorizzazione QR. Con `forgetting_factor=1`
-risolve lo stesso problema della ricorrenza del paper del 2005:
-
-```
-g = V @ phi / (1 + phi.T @ V @ phi)
-w = w + g * (y - phi.T @ w)
-V = V - outer(g, phi.T @ V)
-```
-
-`rlsk` usa la forma di Joseph, algebricamente equivalente alle formule
-seguenti in aritmetica esatta. Imposta `V_prior = V / forgetting_factor` e la varianza di misura
-`R = max(squared_error, 1e-4)` se `kalman_noise=True`, oppure R=1:
+`rls` è l'unica implementazione di RLS e usa una fattorizzazione QR dell'inversa
+della covarianza (forma a radice quadrata dell'informazione). Riproduce, in
+aritmetica esatta, la ricorsione
 
 ```
+V_prior = V / forgetting_factor
 g = V_prior @ phi / (R + phi.T @ V_prior @ phi)
 w = w + g * (y - phi.T @ w)
 V = V_prior - outer(g, phi.T @ V_prior) + process_noise * I
 ```
 
-Con lambda=1, Q=0 e `kalman_noise=False`, RLSK coincide con RLS. `rls` usa anch'esso `forgetting_factor` dalla 2.0, ma ignora
-`process_noise` e `kalman_noise`. I nuovi classificatori hanno V=`rls_delta * I` e
+con `R = max(squared_error, 1e-4)` se `kalman_noise=True`, altrimenti `R = 1`.
+Con `forgetting_factor=1`, `process_noise=0` e `kalman_noise=False` è la RLS del
+paper del 2005 (Algoritmo 5). I nuovi classificatori hanno V=`rls_delta * I` e
 pesi nulli salvo l'intercetta impostata da `initial_prediction`. I figli
 ereditano i pesi dei genitori, senza ricombinarli, e inizializzano nuovamente V,
 come nei metodi `clone` forniti. Questa scelta consente al predittore di adattarsi
-alla nuova regione dopo la mutazione.
+alla nuova regione dopo la mutazione. Derivazione, forma numerica e casi
+particolari: [prediction-updates.md](prediction-updates.md), §5.
 
 ## Correzioni e differenze intenzionali
 
@@ -144,13 +142,15 @@ campionamento diversi e le popolazioni possono divergere rapidamente.
 - **Intervalli chiusi**: il C++ usa `(lower, upper]` con un caso speciale per
   il minimo di dominio. Qui si usa `[lower, upper]`, così covering e matching
   funzionano anche per feature costanti e condizioni degeneri.
-- **RLS**: nel file C++ `rls.cpp`, delta non viene letto dalla configurazione e
-  l'update aggiunge sempre I. La variante Python `rls` segue il paper, senza
-  rumore di processo; `rlsk(process_noise=1)` consente l'aggiunta di I.
-- **RLSK**: nel ramo Q il C++ scala V per Q e poi aggiunge I, non Q*I come
-  indicano i commenti. Qui si aggiunge Q*I. `x0` è inizializzato esplicitamente;
-  la squared error necessaria al Kalman è effettivamente aggiornata, mentre
-  `qerror` non risulta aggiornata nel ciclo del sistema fornito.
+- **RLS**: nel file C++ `rls.cpp`, delta non viene letto dalla configurazione
+  (V0 = 0) e l'update aggiunge sempre I. Il predittore Python `rls` segue per
+  default il paper (V0 = `rls_delta * I`, senza rumore di processo);
+  `rls_delta=0, process_noise=1` riproduce esattamente `rls.cpp`.
+- **Rumore di processo e varianza di misura**: nel ramo Q di `rlsk.cpp` il C++
+  scala V per Q e poi aggiunge I, non Q*I come indicano i commenti. Qui si
+  aggiunge Q*I. `x0` è inizializzato esplicitamente; la squared error necessaria
+  a `kalman_noise` è effettivamente aggiornata, mentre `qerror` non risulta
+  aggiornata nel ciclo del sistema fornito.
 - **Predittore costante**: il costruttore C++ non inizializza esplicitamente
   il valore della predizione; qui `initial_prediction` lo definisce. Si mantiene
   il passo costante eta del suo update, senza introdurre MAM sul predittore.
