@@ -550,6 +550,6 @@ def write_report(cdir, cfg, runs, desc, par, omni, pair, agree, summ, comp, trad
       "no update), but on different random streams; grid metrics use bit-identical evaluation points.\n"
       "- Runtime is reported, not tested: interpreted Python vs compiled C++.\n"
       "- Known implementation differences that the campaign measures rather than removes are listed in "
-      "`campaign/docs/PARAMETER_PARITY.md` (e.g. the xcslib mutation operator overwrites the upper bound with the lower "
-      "one; `n_degenerate_rules` in the descriptive table counts such rules in the final populations).\n")
+      "`campaign/docs/PARAMETER_PARITY.md`. `n_degenerate_rules` in the descriptive table counts zero-width rules in "
+      "the final populations: it is expected to be 0 since the xcslib mutation fix (patch 3).\n")
     (P["derived"] / "report.md").write_text("\n".join(L))

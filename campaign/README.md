@@ -7,8 +7,9 @@ Python-only Lasso extension.
 Everything lives in this `campaign/` folder. The two libraries are used as upstream code,
 with the modifications recorded in `docs/PARAMETER_PARITY.md §5`:
 
-- xcslib: two patches (`patches/`): the benchmark functions, and the prediction function
-  `rls_delta` (the RLS of Lanzi et al. 2005, Alg. 5, with V0 = δI);
+- xcslib: three patches (`patches/`): the benchmark functions; the prediction function
+  `rls_delta` (the RLS of Lanzi et al. 2005, Alg. 5, with V0 = δI); the fix of the fixed
+  mutation of interval conditions, which set the upper bound to the lower one;
 - xcsf_python: refactored in place into library version 2.1.0 (modular structure; a single RLS;
   a recursive online Lasso). The folder keeps its upstream name. Its exact diff against the
   upstream import is stored in every campaign manifest (`manifest/xcsf_python-vs-upstream.diff`).
@@ -39,7 +40,7 @@ All commands from the project root (the folder containing `campaign/`).
 # 0. Python environment (venv in ~/.venvs/xcsfcamp, outside Dropbox)
 bash campaign/scripts/00_setup_python.sh
 
-# 1. Apply the two xcslib patches (benchmark functions; rls_delta), one commit each
+# 1. Apply the three xcslib patches (benchmark functions; rls_delta; mutation fix), one commit each
 #    (also commits the unmodified libraries first if the repository has no commit yet)
 bash campaign/scripts/01_apply_cxx_patch.sh --commit
 

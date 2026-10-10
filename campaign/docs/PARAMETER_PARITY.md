@@ -33,7 +33,7 @@ generated per-campaign table is `results/<id>/manifest/parity_audit.md`
 | θ_GA | `theta GA` | `theta_ga` | equal (numerosity-weighted mean timestamp in both) |
 | χ, μ | `crossover probability`, `mutation probability` | same names | equal (μ per endpoint in both, `fixed` mutation) |
 | r0 | `r0` (condition) | `cover_radius` (`normalize=False`) | equal, raw units: cover `[x−U(0,r0), x+U(0,r0)]` in both |
-| m0 | `m0` | `mutation_scale` | equal, `U(−m0, m0)` per endpoint in both |
+| m0 | `m0` | `mutation_scale` | equal, `U(−m0, m0)` per endpoint in both; endpoints mutate independently and are swapped if they cross (xcslib: since patch §5.4) |
 | crossover | `crossover = one-point` | `crossover="one_point"` | same operator (whole interval or upper endpoint swapped) |
 | θ_del, δ | `theta delete`, δ **hard-coded 0.1** | `theta_delete`, `delta` | equal; config is rejected if δ ≠ 0.1 |
 | θ_sub, GA subsumption | `theta GA sub`, `GA subsumption` + `GA subsumption on [A]` | `theta_subsume`, `ga_subsumption` (parents, then niche) | equal |
@@ -104,12 +104,12 @@ the generated confsys.
 They are properties of the implementations being compared; the campaign quantifies
 their effect instead of hiding it. None can be aligned through configuration.
 
-- **D1 – xcslib `fixed`/`gaussian` mutation bug.** In `real_interval_condition.cpp`
-  the upper endpoint is set with `set_upper_bound(lower)`: whenever the upper bound
-  is mutated it becomes the (possibly mutated) *lower* bound, i.e. a zero-width
-  interval `(l, l]` that matches nothing. xcsf_python mutates each endpoint
-  independently (documented in its `docs/algorithm.md`). With μ = 0.04 per endpoint,
-  ≈ 4 % of offspring are affected. Reported per run as `n_degenerate_rules`.
+- **D1 – xcslib `fixed`/`gaussian` mutation bug: removed** by
+  `patches/xcslib-interval-mutation-fix.patch` (§5.4) from campaign v3 on. Until v2 the
+  upper endpoint was set with `set_upper_bound(lower)`: whenever the upper bound was
+  mutated it became the (possibly mutated) *lower* bound, i.e. a zero-width interval
+  `(l, l]` that matches nothing. `n_degenerate_rules` is still reported per run and is
+  now expected to be 0 in both implementations.
 - **D2 – interval semantics.** xcslib matches `lower < x ≤ upper` (unbounded); Python
   uses the closed interval. Measure-zero for continuous inputs, but grid points equal to
   a rule bound (e.g. the domain minimum) may be treated differently.
@@ -132,9 +132,9 @@ their effect instead of hiding it. None can be aligned through configuration.
 
 ## 5. Library modifications
 
-xcslib: two patches, applied in order by `scripts/01_apply_cxx_patch.sh` and committed separately
-(one commit each) with `--commit` (§5.1, §5.2). xcsf_python: one refactoring, committed separately
-(§5.3).
+xcslib: three patches, applied in order by `scripts/01_apply_cxx_patch.sh` and committed separately
+(one commit each) with `--commit` (§5.1, §5.2, §5.4). xcsf_python: one refactoring, committed
+separately (§5.3).
 
 ### 5.1 `campaign/patches/xcslib-benchmark-functions.patch`
 
@@ -199,6 +199,31 @@ to `manifest/xcsf_python-vs-upstream.diff` when a campaign is planned, and its S
 in `plan_snapshot.json → xcsf_python_changes` and in every session snapshot.
 Results of campaign v2 were produced with library 2.0.0 and are not comparable run by run for the
 RLS and Lasso arms: this configuration has a new `campaign_id` (`evostar2027-v3`).
+
+### 5.4 `campaign/patches/xcslib-interval-mutation-fix.patch`
+
+Requested explicitly by the project owner (2026-10-10).
+
+**Reason.** In `real_interval_condition.cpp`, `fixed_mutation` and `gaussian_mutation` ended the
+mutation of the upper bound with `value[i].set_upper_bound(lower)`: the upper bound received the
+value of the *lower* one, so every such mutation produced a zero-width interval `(l, l]` that
+can never match. These rules are never updated, so they keep their inherited statistics and
+occupy part of the population: in the v2 pilot the final xcslib populations contained a median
+of 16–19 zero-width rules out of ≈ 70 macroclassifiers for Constant, NLMS and RLS (5 of 32 for
+`rls_delta`), against 0 in xcsf_python. This was the difference D1 of §4.
+
+**Change.** The two bounds are mutated independently, as before with the same random draws in
+the same order, and the interval is then assigned as `[min(lower, upper), max(lower, upper)]`:
+if the mutated bounds cross they are swapped, the repair that `check()` documents for the other
+operators and that xcsf_python applies. (Assigning the bounds one at a time through
+`interval::set_*_bound` would instead collapse a crossed interval to zero width.) No clipping is
+added. `gaussian_mutation` had the same line and gets the same correction, although
+`mutate()` does not dispatch it. One file, 6 lines added and 4 removed.
+
+**Effect.** Short `xcsf-rf` runs (3000 learning problems, 3 seeds, 2 benchmarks) ended with 2–4
+zero-width rules out of ≈ 20 before the patch and with none after it; `validate` repeats this
+check on the binary. xcslib results are not comparable with campaign v2, where the bug was part
+of what the parity study measured.
 
 ## 6. Build
 

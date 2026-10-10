@@ -372,7 +372,8 @@ def audit_rows(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
     row("mu (mutation prob. per endpoint)", "mutation probability", cs["mutation probability"], "mutation_probability", kw["mutation_probability"])
     row("r0 (cover radius)", "r0", cond["r0"], "cover_radius", kw["cover_radius"], note="raw input units, normalize=False")
     row("m0 (mutation scale)", "m0", cond["m0"], "mutation_scale", kw["mutation_scale"],
-        note="fixed: U(-m0,m0) in both; xcslib bug: upper endpoint set to the new LOWER (see PARAMETER_PARITY.md)")
+        note="fixed: U(-m0,m0) per endpoint, endpoints swapped if they cross, in both "
+             "(xcslib: requires patches/xcslib-interval-mutation-fix.patch)")
     row("mutation operator", "mutation", cond["mutation"], "mutation", kw["mutation"], equal=True)
     row("crossover operator", "crossover", cond["crossover"], "crossover", kw["crossover"], equal=True)
     row("bounded conditions", "bounded", cond["bounded"], "bounded", kw["bounded"], equal=(cond["bounded"] == "off") == (not kw["bounded"]),

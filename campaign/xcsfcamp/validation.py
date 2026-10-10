@@ -14,6 +14,8 @@
    driven sample by sample by ~/.xcsfcamp/bin/pf_driver, vs the same transcriptions.
 4. C++ benchmark parity: xcslib's own environment (execution trace) vs the
    Python definitions, for every benchmark (requires the built binary).
+4b. C++ interval mutation: short xcsf-rf runs end without zero-width conditions (the fix of
+   patches/xcslib-interval-mutation-fix.patch is in the binary).
 5. Determinism: identical seeds reproduce identical results (both implementations).
 """
 
@@ -427,6 +429,25 @@ def test_cxx_rls_delta_run(binary: Path, log):
     log("[ok] xcsf-rf runs with prediction function rls_delta (x0 and delta parsed, population readable)")
 
 
+def test_cxx_interval_mutation(binary: Path, log):
+    """The binary contains the mutation fix: no zero-width interval in the final populations of short
+    runs (standard xcslib outputs). Before patches/xcslib-interval-mutation-fix.patch every mutation of
+    an upper bound produced one, and a few always survived to the end of such runs."""
+    from .cxx import parse_population
+    from .parity import render_confsys
+    total = 0
+    for seed in (1001, 1002, 1003):
+        spec = _make_spec("sine_low_1d", "nlms", n=3000, seed=seed)
+        with tempfile.TemporaryDirectory() as td:
+            _run_cxx(binary, Path(td), render_confsys(spec, "validation"))
+            pop = parse_population(Path(td) / "population.xcsf-0000.gz", 1, "nlms")
+        degenerate = int((pop["upper0"] <= pop["lower0"]).sum())
+        _check(degenerate == 0, f"xcslib population (seed {seed}) has {degenerate} zero-width interval(s) out of "
+                                f"{len(pop)}: the interval-mutation fix is not in the binary (rebuild)")
+        total += len(pop)
+    log(f"[ok] xcslib interval mutation: no zero-width condition in {total} final macroclassifiers of 3 short runs")
+
+
 # ------------------------------------------------------------------------------------------- 5
 def test_determinism(binary: Path | None, log):
     _use_repository_xcsf()
@@ -479,6 +500,7 @@ def run_all(out: Path, with_cxx=True, with_determinism=True):
         test_cxx_benchmarks(binary, log)
         test_cxx_predictors(require_pf_driver(), log)
         test_cxx_rls_delta_run(binary, log)
+        test_cxx_interval_mutation(binary, log)
     else:
         log("[skip] C++ checks (--no-cxx)")
     if with_determinism:

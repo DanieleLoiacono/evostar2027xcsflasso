@@ -8,6 +8,10 @@
 #      - add the prediction function 'rls_delta' (<prediction::rls_delta> x0, delta): recursive least
 #        squares exactly as in Lanzi et al. (IlliGAL 2005012, Alg. 5): V0 = delta*I, no matrix added
 #        after the update. The existing 'rls' (V0 = 0, V += I every update) is left untouched.
+#   3. patches/xcslib-interval-mutation-fix.patch
+#      - real interval conditions: the fixed and gaussian mutations assigned the LOWER bound to the
+#        upper bound, producing zero-width intervals that match nothing. The two bounds now mutate
+#        independently and are swapped if they cross.
 # xcsf_python-2.0.0 is not touched by this script (its own modification: docs/PARAMETER_PARITY.md §5.3).
 #
 # Usage: scripts/01_apply_cxx_patch.sh            apply (idempotent) and print git instructions
@@ -16,11 +20,12 @@
 set -euo pipefail
 source "$(dirname "$0")/_env.sh"
 L=xcslib-1.5-rc1-niches
-PATCHES=(xcslib-benchmark-functions xcslib-rls-delta)
+PATCHES=(xcslib-benchmark-functions xcslib-rls-delta xcslib-interval-mutation-fix)
 FILES_xcslib_benchmark_functions=($L/src/environments/real_functions_env.cpp
                                   $L/include/environments/real_functions_env.h)
 FILES_xcslib_rls_delta=($L/include/xcsf/pf/base.h $L/include/xcsf/pf/prediction_functions.h
                         $L/src/pf/utility.cpp $L/include/xcsf/pf/rls_delta.h $L/src/pf/rls_delta.cpp)
+FILES_xcslib_interval_mutation_fix=($L/src/conditions/real_interval_condition.cpp)
 MSG_xcslib_benchmark_functions="xcslib: benchmark functions (sine4, abs, sincos2d, friedman5) + accept 'min/max input' keys
 
 Campaign patch 1/2; see campaign/patches/xcslib-benchmark-functions.patch
@@ -28,6 +33,11 @@ and campaign/docs/PARAMETER_PARITY.md (section 'Library modification')."
 MSG_xcslib_rls_delta="xcslib: add prediction function rls_delta (RLS with V0 = delta*I, Lanzi et al. 2005 Alg. 5)
 
 Campaign patch 2/2; see campaign/patches/xcslib-rls-delta.patch
+and campaign/docs/PARAMETER_PARITY.md (section 'Library modification')."
+
+MSG_xcslib_interval_mutation_fix="xcslib: fix fixed/gaussian mutation of real interval conditions (upper bound was set to the lower one)
+
+Campaign patch 3/3; see campaign/patches/xcslib-interval-mutation-fix.patch
 and campaign/docs/PARAMETER_PARITY.md (section 'Library modification')."
 
 cd "$ROOT_DIR"
