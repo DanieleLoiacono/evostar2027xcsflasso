@@ -22,6 +22,9 @@ CAMPAIGN_DIR = Path(__file__).resolve().parents[1]          # .../campaign
 PROJECT_DIR = CAMPAIGN_DIR.parent                            # repository root
 CXX_LIB_DIR = PROJECT_DIR / "xcslib-1.5-rc1-niches"
 PY_LIB_DIR = PROJECT_DIR / "xcsf_python-2.0.0"
+# Version of the library in PY_LIB_DIR after the refactoring recorded in docs/PARAMETER_PARITY.md §5.3
+# (the folder keeps its upstream name; the manifest stores the diff against the upstream import).
+PY_LIB_VERSION = "2.1.0"
 
 ALLOWED_TOP = {"campaign_id", "description", "n_runs", "seed_base", "epsilon_fraction", "benchmarks", "xcsf",
                "benchmark_overrides", "predictors", "studies", "monitoring", "analysis", "profiles"}
@@ -35,8 +38,8 @@ PREDICTOR_KEYS = {
     "nlms": {"type", "eta", "x0"},
     "rls_xcslib": {"type", "x0"},
     "rls_delta": {"type", "x0", "delta"},
-    "rls_standard": {"type", "x0", "delta"},
-    "lasso_online": {"type", "eta", "x0", "lasso_alpha", "learning_rate_decay"},
+    "lasso_online": {"type", "x0", "lasso_alpha", "delta", "forgetting_factor", "max_iter", "tol"},
+    "lasso_sgd": {"type", "eta", "x0", "lasso_alpha", "learning_rate_decay"},
     "lasso_batch": {"type", "x0", "lasso_alpha", "window", "max_iter", "tol"},
 }
 CXX_SUPPORTED_TYPES = {"constant", "nlms", "rls_xcslib", "rls_delta"}

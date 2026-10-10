@@ -19,9 +19,13 @@
 - **Benchmarks per study**: parity uses all five; pyext omits `sine_shifted_1d`, which after
   domain scaling is the same problem as `sine_low_1d` (same training stream, same results).
 - **Predictor**: parity = Constant, NLMS, RLS (xcslib semantics: V0 = 0, V += I per update) and
-  `rls_delta` (RLS of Lanzi et al. 2005, Alg. 5: V0 = δI, δ = 1000; xcslib `rls_delta` vs Python
-  `rlsk` with Q = 0); pyext = Constant, NLMS, RLS + `rls_standard` (the same estimator as
-  `rls_delta`, in QR form) + Lasso Online and Lasso Batch, each at λ ∈ {0.001, 0.01, 0.1}.
+  `rls_delta` (RLS of Lanzi et al. 2005, Alg. 5: V0 = δI, δ = 1000; xcslib `rls_delta` vs the
+  Python `rls` with the same δ and Q = 0); pyext = Constant, NLMS, RLS, `rls_delta` + three
+  Lasso predictors, each at penalty `lasso_alpha` ∈ {0.001, 0.01, 0.1}:
+  `lasso_online` (recursive Lasso: exact L1 solution on the RLS statistics of the rule, same
+  δ = 1000 and no forgetting as `rls_delta`), `lasso_batch` (coordinate descent on a window of
+  256 samples) and `lasso_sgd` (first-order proximal gradient, η = 0.2: the online Lasso of the
+  previous library version, kept as a reference for convergence speed).
 - **Replicates**: 30 runs per cell, seeds `seed_base + run_id`.
 
 Fixed: N = 800, 50 000 learning problems, ε0 = 0.05 × output range, β = η = 0.2, α = 0.1,
@@ -37,9 +41,9 @@ xcslib has no input scaling, so the parity study uses raw inputs in both librari
 (`normalize=False`); r0 and m0 are expressed in raw units. The shifted-domain benchmarks
 deliberately stress NLMS/RLS with large inputs (x ≈ 1000, x0 = 1).
 
-The Python-only study uses z = (x − min)/(max − min) for *all* its arms, because online
-Lasso (an LMS-type step) diverges on x ≈ 1000. Its baselines are re-run in that
-representation; Constant is representation-invariant and acts as a built-in check
+The Python-only study uses z = (x − min)/(max − min) for *all* its arms, because the
+first-order Lasso (`lasso_sgd`, an LMS-type step) diverges on x ≈ 1000 and because the L1
+penalty is scale-dependent. Its baselines are re-run in that representation; Constant is representation-invariant and acts as a built-in check
 (identical results in both studies for the same seed).
 
 ## Training stream, evaluation set, seeds
@@ -78,3 +82,15 @@ but negligible*, *practically different* (significant and 95 % CI beyond the mar
 (a "medium" effect) at α = 0.05 before multiplicity correction; equivalence at ±0.1 ε0
 requires the between-run spread of grid MAE to be well below ε0, which the pilot profile
 (5 runs) lets you check before committing to the full campaign.
+
+## Note on the Lasso penalty scale
+
+`lasso_alpha` penalises slopes in the units of (input × target). With domain-scaled inputs and
+targets of amplitude ≈ 100, a slope of a rule of half-width h is set to zero when its
+least-squares value is below 3·`lasso_alpha`/h² (see `xcsf_python-2.0.0/docs/prediction-updates.md`,
+§6.1): for the configured values this happens only for very narrow rules or near the extrema of
+the target. On these 1-D benchmarks, with a single relevant input, the Lasso arms are therefore
+expected to behave like their unpenalised counterparts (`lasso_online` ≈ `rls_delta`); the v2
+pilot shows a median `frac_zero_slopes` of at most 0.06 for every Lasso arm. This is a property of the design, kept
+unchanged here; larger penalties or the optional multi-input benchmarks (F6/F7) are where
+sparsity can appear.

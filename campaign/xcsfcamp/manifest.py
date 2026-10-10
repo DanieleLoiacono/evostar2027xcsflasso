@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-from .config import CAMPAIGN_DIR, CXX_LIB_DIR, PROJECT_DIR, PY_LIB_DIR
+from .config import CAMPAIGN_DIR, CXX_LIB_DIR, PROJECT_DIR, PY_LIB_DIR, PY_LIB_VERSION
 
 # xcslib modifications, applied in this order and committed separately (scripts/01_apply_cxx_patch.sh)
 PATCH_FILES = (
@@ -22,6 +22,10 @@ PATCH_FILES = (
     CAMPAIGN_DIR / "patches" / "xcslib-rls-delta.patch",             # prediction::rls_delta (paper's RLS)
 )
 PATCH_FILE = PATCH_FILES[0]   # backwards compatibility
+# xcsf_python was refactored in place (docs/PARAMETER_PARITY.md §5.3). This is the commit that imported the
+# unmodified upstream xcsf_python-2.0.0: the manifest stores the exact diff of the library against it.
+PY_LIB_UPSTREAM_COMMIT = "5e04df786135f83a0474b1f86b476c633ec87543"
+PY_LIB_DIFF_NAME = "xcsf_python-vs-upstream.diff"
 BUILD_DIR = CAMPAIGN_DIR / "build"
 BUILD_INFO = BUILD_DIR / "build_info.json"
 # Executables are kept outside the (Dropbox-synced) project: see scripts/_env.sh
@@ -100,6 +104,31 @@ def patch_status() -> Dict[str, Any]:
     return out
 
 
+def python_library_diff() -> str:
+    """Exact diff of the xcsf_python sources in use against the upstream import (AGENTS.md rule 3).
+
+    Working tree vs PY_LIB_UPSTREAM_COMMIT, so uncommitted edits are included; bytecode is ignored.
+    Fails loudly if it cannot be produced: a campaign must not be planned on an undocumented library."""
+    if shutil.which("git") is None:
+        raise SystemExit("[fail] git is required to record the xcsf_python diff against the upstream import")
+    r = subprocess.run(["git", "diff", "--no-color", "--no-ext-diff", PY_LIB_UPSTREAM_COMMIT, "--", PY_LIB_DIR.name,
+                        f":(exclude){PY_LIB_DIR.name}/**/__pycache__/**", f":(exclude){PY_LIB_DIR.name}/**/*.pyc"],
+                       cwd=PROJECT_DIR, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"[fail] cannot diff {PY_LIB_DIR.name} against the upstream import "
+                         f"{PY_LIB_UPSTREAM_COMMIT[:12]}: {r.stderr.strip()[-500:]}")
+    return r.stdout
+
+
+def python_library_changes() -> Dict[str, Any]:
+    """Summary of the xcsf_python modification; the diff text itself is written once per campaign
+    to manifest/PY_LIB_DIFF_NAME (runs.write_plan) and identified here by its hash."""
+    text = python_library_diff()
+    return dict(version=PY_LIB_VERSION, upstream_commit=PY_LIB_UPSTREAM_COMMIT, diff_file=PY_LIB_DIFF_NAME,
+                diff_sha256=hashlib.sha256(text.encode()).hexdigest(), diff_lines=text.count("\n"),
+                documentation="campaign/docs/PARAMETER_PARITY.md section 5.3")
+
+
 def require_patch_applied():
     st = patch_status()
     if st["status"] != "applied":
@@ -176,7 +205,8 @@ def execution_code_hash() -> Dict[str, Any]:
 
 def snapshot() -> Dict[str, Any]:
     return dict(environment=environment(), git=git_info(), xcslib=tree_hash(CXX_LIB_DIR),
-                xcsf_python=tree_hash(PY_LIB_DIR), campaign_code=tree_hash(CAMPAIGN_DIR / "xcsfcamp"),
+                xcsf_python=tree_hash(PY_LIB_DIR), xcsf_python_changes=python_library_changes(),
+                campaign_code=tree_hash(CAMPAIGN_DIR / "xcsfcamp"),
                 execution_code=execution_code_hash(),
                 patch=patch_status(), cxx_build=build_info())
 

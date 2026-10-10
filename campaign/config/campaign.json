@@ -1,5 +1,5 @@
 {
-  "campaign_id": "evostar2027-v2",
+  "campaign_id": "evostar2027-v3",
   "description": "Controlled comparison of xcsf_python-2.0.0 and xcslib-1.5-rc1-niches on continuous 1-D function approximation (single-step, supervised), plus a Python-only Lasso extension.",
 
   "n_runs": 30,
@@ -43,8 +43,8 @@
     "nlms":         {"type": "nlms", "eta": 0.2, "x0": 1.0},
     "rls":          {"type": "rls_xcslib", "x0": 1.0},
     "rls_delta":    {"type": "rls_delta", "x0": 1.0, "delta": 1000.0},
-    "rls_standard": {"type": "rls_standard", "x0": 1.0, "delta": 1000.0},
-    "lasso_online": {"type": "lasso_online", "eta": 0.2, "x0": 1.0, "lasso_alpha": [0.001, 0.01, 0.1], "learning_rate_decay": 0.0},
+    "lasso_online": {"type": "lasso_online", "x0": 1.0, "lasso_alpha": [0.001, 0.01, 0.1], "delta": 1000.0, "forgetting_factor": 1.0, "max_iter": 1000, "tol": 1e-6},
+    "lasso_sgd":    {"type": "lasso_sgd", "eta": 0.2, "x0": 1.0, "lasso_alpha": [0.001, 0.01, 0.1], "learning_rate_decay": 0.0},
     "lasso_batch":  {"type": "lasso_batch", "x0": 1.0, "lasso_alpha": [0.001, 0.01, 0.1], "window": 256, "max_iter": 1000, "tol": 1e-6}
   },
 
@@ -56,10 +56,10 @@
       "input_representation": "raw"
     },
     "pyext": {
-      "description": "Python-only extension: Lasso Batch / Lasso Online vs common predictors, all on domain-scaled inputs z=(x-min)/(max-min). Never pooled with the parity study. sine_shifted_1d is omitted: after domain scaling it is identical to sine_low_1d.",
+      "description": "Python-only extension: Lasso Batch / Lasso Online (recursive, on RLS statistics) vs common predictors, all on domain-scaled inputs z=(x-min)/(max-min); lasso_sgd is the first-order (proximal gradient) online Lasso kept as a reference. Never pooled with the parity study. sine_shifted_1d is omitted: after domain scaling it is identical to sine_low_1d.",
       "implementations": ["py"],
       "benchmarks": ["sine_low_1d", "sinus3_1d", "sinus4_1d", "abs_mix_1d"],
-      "predictors": ["constant", "nlms", "rls", "rls_standard", "lasso_online", "lasso_batch"],
+      "predictors": ["constant", "nlms", "rls", "rls_delta", "lasso_online", "lasso_sgd", "lasso_batch"],
       "input_representation": "unit"
     }
   },
@@ -87,7 +87,7 @@
       "n_runs": 2,
       "benchmarks": ["sine_low_1d", "sine_shifted_1d"],
       "xcsf": {"population_size": 200, "n_learning_problems": 3000},
-      "predictors": {"lasso_online": {"lasso_alpha": [0.01]}, "lasso_batch": {"lasso_alpha": [0.01]}}
+      "predictors": {"lasso_online": {"lasso_alpha": [0.01]}, "lasso_sgd": {"lasso_alpha": [0.01]}, "lasso_batch": {"lasso_alpha": [0.01]}}
     },
     "pilot": {
       "campaign_id_suffix": "-pilot",

@@ -18,18 +18,20 @@ class ParityError(ValueError):
     pass
 
 
-# Python rlsk with V0 = PY_RLS_XCSLIB_DELTA * I approximates xcslib rls_pf, whose
-# static `delta` is never read from the configuration (zero-initialised), so V0 = 0.
-# xcsf_python requires rls_delta > 0; with 1e-12 the first update changes the
-# weights by O(1e-9 * error), i.e. numerically the same "no-op first update".
-PY_RLS_XCSLIB_DELTA = 1e-12
-
-# The paper's RLS (Lanzi et al., IlliGAL 2005012, Sec. 7.3, Alg. 5: V0 = delta*I, no Q, no forgetting) is
-#   xcslib : prediction function 'rls_delta' (patches/xcslib-rls-delta.patch), covariance form
-#   Python : LocalPredictor 'rlsk' with process_noise=0, forgetting_factor=1, kalman_noise=False, same delta
-#            (covariance form, Joseph update: algebraically identical, slightly better rounding)
-# Both: zero initial weights, offspring inherit the weights and restart from V = delta*I.
-# The QR (square-root information) form of the same estimator is Python 'rls' (type rls_standard).
+# xcsf_python has ONE RLS ('rls', square-root information / QR form); both xcslib RLS variants are
+# settings of it (docs/PARAMETER_PARITY.md, section 3):
+#
+# rls_xcslib: xcslib rls_pf never reads its static `delta` from the configuration (zero-initialised),
+#   so V0 = 0, and it adds I to V after every update. Python: rls_delta = 0 (exact: the first
+#   observation is ignored, as in xcslib where the gain is 0), process_noise = 1.
+PY_RLS_XCSLIB_DELTA = 0.0
+PY_RLS_XCSLIB_PROCESS_NOISE = 1.0
+#
+# rls_delta: the paper's RLS (Lanzi et al., IlliGAL 2005012, Sec. 7.3, Alg. 5: V0 = delta*I, no Q, no
+#   forgetting).  xcslib: prediction function 'rls_delta' (patches/xcslib-rls-delta.patch), covariance
+#   form.  Python: rls_delta = delta, process_noise = 0, forgetting_factor = 1, kalman_noise = False.
+#   Same estimator, propagated as a triangular factor instead of a covariance (better rounding).
+# Both settings: zero initial weights; offspring inherit the weights and restart from V0.
 
 # xcslib parameters that are hard-coded or not settable through confsys
 CXX_HARDCODED = {
@@ -317,15 +319,20 @@ def py_params(spec: Dict[str, Any]) -> Dict[str, Any]:
     elif t == "nlms":
         kw.update(prediction="nlms", prediction_learning_rate=float(p["eta"]), x0=float(p["x0"]))
     elif t == "rls_xcslib":
-        kw.update(prediction="rlsk", x0=float(p["x0"]), rls_delta=PY_RLS_XCSLIB_DELTA, forgetting_factor=1.0,
-                  process_noise=1.0, kalman_noise=False)
+        kw.update(prediction="rls", x0=float(p["x0"]), rls_delta=PY_RLS_XCSLIB_DELTA, forgetting_factor=1.0,
+                  process_noise=PY_RLS_XCSLIB_PROCESS_NOISE, kalman_noise=False)
     elif t == "rls_delta":
-        kw.update(prediction="rlsk", x0=float(p["x0"]), rls_delta=float(p["delta"]), forgetting_factor=1.0,
+        if not (float(p["delta"]) > 0):
+            raise ParityError("rls_delta requires delta > 0")
+        kw.update(prediction="rls", x0=float(p["x0"]), rls_delta=float(p["delta"]), forgetting_factor=1.0,
                   process_noise=0.0, kalman_noise=False)
-    elif t == "rls_standard":
-        kw.update(prediction="rls", x0=float(p["x0"]), rls_delta=float(p["delta"]), forgetting_factor=1.0)
     elif t == "lasso_online":
-        kw.update(prediction="lasso_online", prediction_learning_rate=float(p["eta"]), x0=float(p["x0"]),
+        # recursive Lasso on RLS statistics: no learning rate; delta/forgetting as for rls_delta
+        kw.update(prediction="lasso_online", x0=float(p["x0"]), lasso_alpha=float(p["lasso_alpha"]),
+                  rls_delta=float(p["delta"]), forgetting_factor=float(p["forgetting_factor"]),
+                  lasso_max_iter=int(p["max_iter"]), lasso_tol=float(p["tol"]))
+    elif t == "lasso_sgd":
+        kw.update(prediction="lasso_sgd", prediction_learning_rate=float(p["eta"]), x0=float(p["x0"]),
                   lasso_alpha=float(p["lasso_alpha"]), lasso_learning_rate_decay=float(p["learning_rate_decay"]))
     elif t == "lasso_batch":
         kw.update(prediction="lasso_batch", x0=float(p["x0"]), lasso_alpha=float(p["lasso_alpha"]),
@@ -404,15 +411,17 @@ def audit_rows(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
         row("x0", "prediction::nlms x0", secs["prediction::nlms"]["x0"], "x0", kw["x0"])
     elif pt == "rls_xcslib":
         row("predictor", "prediction function", pb["prediction function"], "prediction", kw["prediction"], equal=True,
-            note="xcslib 'rls' == Kalman/RLSK form with V0=0, lambda=1, R=1, Q=I")
+            note="xcslib 'rls' == Kalman filter with V0=0, lambda=1, R=1, Q=I; Python 'rls' in the same setting")
         row("x0", "prediction::rls x0", secs["prediction::rls"]["x0"], "x0", kw["x0"])
-        row("V0 scale", "(delta never read -> 0)", 0.0, "rls_delta", kw["rls_delta"], equal=True,
-            note=f"{PY_RLS_XCSLIB_DELTA:g} is the smallest admissible value in xcsf_python")
+        row("V0 scale", "(delta never read -> 0)", 0.0, "rls_delta", kw["rls_delta"],
+            note="exact: with zero covariance the first observation is ignored in both")
         row("process noise Q", "(V += I every update)", 1.0, "process_noise", kw["process_noise"])
         row("forgetting factor", "(none)", 1.0, "forgetting_factor", kw["forgetting_factor"])
+        row("measurement noise R", "(1 in 1 + phi^T V phi)", "off", "kalman_noise", "off" if not kw["kalman_noise"] else "on")
     elif pt == "rls_delta":
         row("predictor", "prediction function", pb["prediction function"], "prediction", kw["prediction"], equal=True,
-            note="paper RLS (Alg. 5): xcslib rls_delta_pf vs Python rlsk with Q=0, lambda=1, R=1 (Joseph form)")
+            note="paper RLS (Alg. 5): xcslib rls_delta_pf (covariance form) vs Python rls with Q=0, lambda=1, R=1 "
+                 "(square-root information form of the same recursion)")
         row("x0", "prediction::rls_delta x0", secs["prediction::rls_delta"]["x0"], "x0", kw["x0"])
         row("delta (V0 = delta*I)", "prediction::rls_delta delta", secs["prediction::rls_delta"]["delta"],
             "rls_delta", kw["rls_delta"])

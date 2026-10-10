@@ -23,7 +23,7 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from .config import CAMPAIGN_DIR, PY_LIB_DIR, load_config, results_dir
+from .config import CAMPAIGN_DIR, PY_LIB_DIR, PY_LIB_VERSION, load_config, results_dir
 
 # Use the upstream xcsf_python sources in this repository (not some other installed copy).
 sys.path.insert(0, str(PY_LIB_DIR / "src"))
@@ -43,8 +43,8 @@ def _check_xcsf_import():
     path = Path(xcsf.__file__).resolve()
     if PY_LIB_DIR.resolve() not in path.parents:
         raise SystemExit(f"[fail] imported xcsf from {path}, expected the copy in {PY_LIB_DIR}")
-    if getattr(xcsf, "__version__", None) != "2.0.0":
-        raise SystemExit(f"[fail] xcsf version {getattr(xcsf, '__version__', None)} != 2.0.0")
+    if getattr(xcsf, "__version__", None) != PY_LIB_VERSION:
+        raise SystemExit(f"[fail] xcsf version {getattr(xcsf, '__version__', None)} != {PY_LIB_VERSION}")
     return xcsf
 
 

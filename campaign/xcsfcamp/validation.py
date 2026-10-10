@@ -3,9 +3,13 @@
 1. Benchmark unit tests: hand-calculated points, float inputs preserved, finite
    outputs over the domain, evaluation-grid endpoints.
 2. Reference plots of every target function (saved before any XCSF run).
-3. Predictor-level parity: xcsf_python LocalPredictor (with the campaign mapping)
-   vs a NumPy transcription of the xcslib update rules (value.cpp, nlms.cpp, rls.cpp,
-   rls_delta.cpp) on identical sample sequences, including offspring (clone) semantics.
+3. Predictor-level parity: the xcsf_python predictor built by the campaign mapping
+   (parity.py_params -> xcsf.prediction.PredictorFactory, exactly as in a run) vs a NumPy
+   transcription of the xcslib update rules (value.cpp, nlms.cpp, rls.cpp, rls_delta.cpp)
+   on identical sample sequences, including offspring (clone) semantics.
+3a. Python-only predictors of the configuration (Lasso): each one, built by the same mapping,
+   satisfies the optimality conditions of its documented objective (lasso_online, lasso_batch)
+   or reproduces its update rule (lasso_sgd).
 3b. C++ predictor check (requires the build): the compiled xcslib prediction functions,
    driven sample by sample by ~/.xcsfcamp/bin/pf_driver, vs the same transcriptions.
 4. C++ benchmark parity: xcslib's own environment (execution trace) vs the
@@ -177,51 +181,118 @@ def _run_local(pred, phis, y, clone_at=0):
     return np.array(got)
 
 
-def test_predictor_parity(log):
+def _use_repository_xcsf():
     import sys
     from .config import PY_LIB_DIR
-    sys.path.insert(0, str(PY_LIB_DIR / "src"))
-    from xcsf.prediction import LocalPredictor, design_matrix
-    from .parity import PY_RLS_XCSLIB_DELTA
+    src = str(PY_LIB_DIR / "src")
+    if src not in sys.path:
+        sys.path.insert(0, src)
+
+
+def _campaign_predictor(pred: dict, size: int = 2):
+    """The xcsf_python predictor a campaign run creates for the predictor spec `pred`:
+    same translation (parity.py_params) and same factory as XCSFRegressor uses internally."""
+    _use_repository_xcsf()
+    from xcsf.prediction import PredictorFactory
+    from .parity import py_params
+    spec = _make_spec("sine_low_1d", pred=pred)
+    spec["implementation"] = "py"
+    kw = py_params(spec)
+    return PredictorFactory(kw["prediction"], kw)(size)
+
+
+def test_predictor_parity(log):
+    _use_repository_xcsf()
+    from xcsf.prediction import design_matrix
 
     rng = np.random.default_rng(42)
     for lo, hi in ((0.0, 100.0), (1000.0, 1100.0), (0.0, 1.0)):
         X = rng.uniform(lo, hi, (500, 1))
         y = 100 * np.sin(2 * np.pi * X[:, 0] / (hi - lo)) + rng.normal(0, 1, 500)
         phis = design_matrix(X, 1, 1.0)
-        cases = {
-            "constant": (LocalPredictor(2, method="constant", learning_rate=0.2, initial_prediction=0.0),
-                         _xcslib_value(phis, y, 0.2)),
-            "nlms": (LocalPredictor(2, method="nlms", learning_rate=0.2, x0=1.0), _xcslib_nlms(phis, y, 0.2, 1.0)),
-            "rls_xcslib": (LocalPredictor(2, method="rlsk", delta=PY_RLS_XCSLIB_DELTA, process_noise=1.0,
-                                          forgetting_factor=1.0, kalman_noise=False, x0=1.0), _xcslib_rls(phis, y)),
-            "rls_delta": (LocalPredictor(2, method="rlsk", delta=1000.0, process_noise=0.0, forgetting_factor=1.0,
-                                         kalman_noise=False, x0=1.0), _xcslib_rls_delta(phis, y, 1000.0)),
-            # same estimator in QR (square-root information) form: Python-only arm rls_standard
-            "rls_standard": (LocalPredictor(2, method="rls", delta=1000.0, forgetting_factor=1.0, x0=1.0),
-                             _xcslib_rls_delta(phis, y, 1000.0)),
-        }
-        for name, (pred, ref) in cases.items():
-            got = []
-            for phi, t in zip(phis, y):
-                pred.update(phi, t)
-                got.append(float(pred.predict(phi)))
-            got = np.array(got)
+        P = PARITY_PREDICTORS
+        for name, ref, clone_at in (
+                ("constant", _xcslib_value(phis, y, P["constant"]["eta"]), 0),
+                ("nlms", _xcslib_nlms(phis, y, P["nlms"]["eta"], P["nlms"]["x0"]), 0),
+                ("rls_xcslib", _xcslib_rls(phis, y), 0),
+                ("rls_delta", _xcslib_rls_delta(phis, y, P["rls_delta"]["delta"]), 0),
+                # offspring semantics: weights inherited, covariance restarted (delta*I, or 0 for rls_xcslib)
+                ("rls_delta", _xcslib_rls_delta(phis, y, P["rls_delta"]["delta"], 200), 200),
+                ("rls_xcslib", _xcslib_rls_clone(phis, y, 200), 200)):
+            got = _run_local(_campaign_predictor(P[name]), phis, y, clone_at=clone_at)
             dev = np.max(np.abs(got - ref)) / max(1.0, np.max(np.abs(ref)))
-            _check(dev < 1e-6, f"predictor parity {name} on [{lo},{hi}]: max relative deviation {dev:.3g}")
-            log(f"  {name:12s} x in [{lo:g},{hi:g}]  max rel. deviation from xcslib formula {dev:.2e}")
-        # offspring semantics: weights inherited, covariance restarted from delta*I
-        for name, pred, ref in (
-            ("rls_delta", LocalPredictor(2, method="rlsk", delta=1000.0, process_noise=0.0, forgetting_factor=1.0,
-                                         kalman_noise=False, x0=1.0), _xcslib_rls_delta(phis, y, 1000.0, 200)),
-            ("rls_xcslib", LocalPredictor(2, method="rlsk", delta=PY_RLS_XCSLIB_DELTA, process_noise=1.0,
-                                          forgetting_factor=1.0, kalman_noise=False, x0=1.0),
-             _xcslib_rls_clone(phis, y, 200))):
-            got = _run_local(pred, phis, y, clone_at=200)
-            dev = np.max(np.abs(got - ref)) / max(1.0, np.max(np.abs(ref)))
-            _check(dev < 1e-6, f"predictor parity {name} with offspring on [{lo},{hi}]: max relative deviation {dev:.3g}")
-            log(f"  {name:12s} x in [{lo:g},{hi:g}]  with offspring at t=200: max rel. deviation {dev:.2e}")
+            _check(dev < 1e-6, f"predictor parity {name} (clone at {clone_at}) on [{lo},{hi}]: "
+                               f"max relative deviation {dev:.3g}")
+            log(f"  {name:12s} clone@{clone_at:<3d} x in [{lo:g},{hi:g}]  max rel. deviation from xcslib formula {dev:.2e}")
     log("[ok] predictor-level parity (campaign mapping reproduces the xcslib update rules)")
+
+
+def _lasso_kkt(w, gradient, penalty):
+    """Violation of the Lasso optimality conditions; the intercept (index 0) is not penalised."""
+    s, g = w[1:], gradient[1:]
+    v = np.where(s != 0, np.abs(g + penalty * np.sign(s)), np.maximum(np.abs(g) - penalty, 0.0))
+    return float(max(abs(gradient[0]), v.max(initial=0.0)))
+
+
+def test_python_only_predictors(log):
+    """Lasso predictors of the configured Python-only studies, built through the campaign mapping."""
+    _use_repository_xcsf()
+    from xcsf.prediction import design_matrix
+    from .config import CAMPAIGN_DIR, CXX_SUPPORTED_TYPES, _expand_variants, load_config
+    cfg = load_config(CAMPAIGN_DIR / "config" / "campaign.json")
+    names = [n for st in cfg["studies"].values() if "cxx" not in st["implementations"] for n in st["predictors"]]
+    arms = [(arm, pred) for n in dict.fromkeys(names) if cfg["predictors"][n]["type"] not in CXX_SUPPORTED_TYPES
+            for arm, pred in _expand_variants(n, cfg["predictors"][n])]
+    if not arms:
+        log("[skip] no Python-only predictor in the configuration")
+        return
+    rng = np.random.default_rng(44)
+    n = 400
+    # one rule of a sine with the amplitude of the campaign benchmarks, unit inputs; the second input is irrelevant
+    X = np.column_stack([rng.uniform(0.30, 0.42, n), rng.uniform(0.0, 1.0, n)])
+    y = 100 * np.sin(2 * np.pi * X[:, 0]) + rng.normal(0, 1.0, n)
+    online = {}
+    for arm, pred in arms:
+        t = pred["type"]
+        x0 = pred["x0"]
+        phis = design_matrix(X, 1, x0)
+        p = _campaign_predictor(pred, size=3)
+        w0 = p.weights.copy()
+        errs, traj = [], []
+        for phi, target in zip(phis, y):
+            errs.append(abs(target - float(p.predict(phi))))
+            p.update(phi, target)
+            traj.append(p.weights.copy())
+        _check(np.all(np.isfinite(p.weights)), f"{arm}: non-finite weights")
+        online[arm] = float(np.mean(errs[20:100]))
+        w, a = p.weights, pred["lasso_alpha"]
+        if t == "lasso_online":
+            lam, delta = pred["forgetting_factor"], pred["delta"]
+            disc = lam ** np.arange(n - 1, -1, -1)
+            grad = phis.T @ (disc * (phis @ w - y)) + lam ** n / delta * (w - w0)
+            viol = _lasso_kkt(w, grad, a * disc.sum()) / disc.sum()
+            _check(viol <= 10 * pred["tol"], f"{arm}: not the minimiser of its objective (KKT violation {viol:.3g})")
+            log(f"  {arm:22s} KKT violation of the recursive-Lasso objective {viol:.1e}; zero slopes {int(np.sum(w[1:] == 0))}/2")
+        elif t == "lasso_batch":
+            m = n if pred["window"] is None else min(n, pred["window"])
+            Pw, yw = phis[-m:], y[-m:]
+            viol = _lasso_kkt(w, Pw.T @ (Pw @ w - yw) / m, a)
+            _check(viol <= 10 * pred["tol"], f"{arm}: not the Lasso of its window (KKT violation {viol:.3g})")
+            log(f"  {arm:22s} KKT violation on its window of {m} samples {viol:.1e}; zero slopes {int(np.sum(w[1:] == 0))}/2")
+        elif t == "lasso_sgd":
+            v, dev = w0.copy(), 0.0
+            for k, (phi, target) in enumerate(zip(phis, y), 1):
+                eta = pred["eta"] / k ** pred["learning_rate_decay"]
+                v = v + eta * (target - phi @ v) * phi
+                v[1:] = np.sign(v[1:]) * np.maximum(np.abs(v[1:]) - eta * a, 0.0)
+                dev = max(dev, float(np.max(np.abs(v - traj[k - 1]))))
+            _check(dev < 1e-9, f"{arm}: deviates from the proximal-gradient rule by {dev:.3g}")
+            log(f"  {arm:22s} max deviation from the proximal-gradient rule {dev:.1e}")
+        else:
+            raise ValidationError(f"{arm}: no validation defined for Python-only predictor type '{t}'")
+    log("  online |error| over local samples 21-100 (lower = faster local convergence): "
+        + ", ".join(f"{a} {e:.4f}" for a, e in online.items()))
+    log("[ok] Python-only predictors (campaign mapping; optimality conditions / update rule)")
 
 
 def _pf_driver_confsys(ptype: str, x0: float, delta: float) -> str:
@@ -270,15 +341,21 @@ def test_cxx_predictors(driver: Path, log):
 
 
 # ------------------------------------------------------------------------------------------- 4
-def _make_spec(bench_name, ptype="nlms", n=200, seed=1001, run_id=0):
+PARITY_PREDICTORS = {"constant": {"type": "constant", "eta": 0.2}, "nlms": {"type": "nlms", "eta": 0.2, "x0": 1.0},
+                     "rls_xcslib": {"type": "rls_xcslib", "x0": 1.0},
+                     "rls_delta": {"type": "rls_delta", "x0": 1.0, "delta": 1000.0}}
+
+
+def _make_spec(bench_name, ptype="nlms", n=200, seed=1001, run_id=0, pred=None):
     from .config import CAMPAIGN_DIR, load_config, resolve_xcsf
     cfg = load_config(CAMPAIGN_DIR / "config" / "campaign.json")
     bench = B.get(bench_name)
     x = resolve_xcsf(cfg, bench, "raw")
     x.update(n_learning_problems=n, population_size=100)
-    pred = {"constant": {"type": "constant", "eta": 0.2}, "nlms": {"type": "nlms", "eta": 0.2, "x0": 1.0},
-            "rls_xcslib": {"type": "rls_xcslib", "x0": 1.0},
-            "rls_delta": {"type": "rls_delta", "x0": 1.0, "delta": 1000.0}}[ptype]
+    if pred is None:
+        pred = PARITY_PREDICTORS[ptype]
+    else:
+        ptype = pred["type"]
     return dict(campaign_id="validation", study="validation", implementation="cxx", benchmark=bench_name,
                 benchmark_code=bench.code, dim=bench.dim, predictor_name=ptype, arm=ptype, predictor=pred,
                 run_id=run_id, seed=seed, input_representation="raw", epsilon_fraction=cfg["epsilon_fraction"],
@@ -352,9 +429,7 @@ def test_cxx_rls_delta_run(binary: Path, log):
 
 # ------------------------------------------------------------------------------------------- 5
 def test_determinism(binary: Path | None, log):
-    import sys
-    from .config import PY_LIB_DIR
-    sys.path.insert(0, str(PY_LIB_DIR / "src"))
+    _use_repository_xcsf()
     from . import python_runner
     spec = _make_spec("sine_shifted_1d", "nlms", n=1000)
     spec["implementation"] = "py"
@@ -395,6 +470,7 @@ def run_all(out: Path, with_cxx=True, with_determinism=True):
     test_benchmarks(log)
     plot_benchmarks(out, log)
     test_predictor_parity(log)
+    test_python_only_predictors(log)
     binary = None
     if with_cxx:
         require_patch_applied()

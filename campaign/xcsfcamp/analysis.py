@@ -525,8 +525,10 @@ def write_report(cdir, cfg, runs, desc, par, omni, pair, agree, summ, comp, trad
     if summ is not None and not summ.empty:
         w("## Q4 — Python-only extension: Lasso Batch / Lasso Online\n")
         w("Separate study (`pyext`), domain-scaled inputs, never pooled with the parity results. Baselines are re-run "
-          "under exactly the same protocol and seeds. `rls_standard` is the textbook RLS (V0 = δI, as `rls_delta` "
-          "in the parity study) in its QR form, available only in Python.\n")
+          "under exactly the same protocol and seeds. `lasso_online` is the recursive Lasso (exact L1 solution on "
+          "RLS statistics); `lasso_sgd` is the first-order proximal-gradient online Lasso, kept as a reference; "
+          "`rls` and `rls_delta` are the two settings of the single Python RLS used in the parity study "
+          "(V0 = 0 with +I per update, and V0 = δI).\n")
         cols = ["benchmark", "arm", "n", "median_grid_mae_eps", "median_n_params", "median_n_macro",
                 "median_frac_zero_slopes", "median_runtime_s", "pareto_optimal"]
         w(md_table(summ[cols]))

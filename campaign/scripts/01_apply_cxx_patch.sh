@@ -8,7 +8,7 @@
 #      - add the prediction function 'rls_delta' (<prediction::rls_delta> x0, delta): recursive least
 #        squares exactly as in Lanzi et al. (IlliGAL 2005012, Alg. 5): V0 = delta*I, no matrix added
 #        after the update. The existing 'rls' (V0 = 0, V += I every update) is left untouched.
-# xcsf_python-2.0.0 is not modified at all.
+# xcsf_python-2.0.0 is not touched by this script (its own modification: docs/PARAMETER_PARITY.md §5.3).
 #
 # Usage: scripts/01_apply_cxx_patch.sh            apply (idempotent) and print git instructions
 #        scripts/01_apply_cxx_patch.sh --commit   also create one commit per patch (AGENTS.md rule 3),

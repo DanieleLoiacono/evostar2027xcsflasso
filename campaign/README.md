@@ -1,13 +1,19 @@
-# XCSF campaign: `xcsf_python-2.0.0` vs `xcslib-1.5-rc1-niches`
+# XCSF campaign: `xcsf_python-2.0.0` (library version 2.1.0) vs `xcslib-1.5-rc1-niches`
 
 Scripts and configuration to run, by hand, the controlled comparison of the two XCSF
 implementations on continuous single-step function approximation, plus the separate
 Python-only Lasso extension.
 
-Everything lives in this `campaign/` folder. The two libraries are used as upstream code:
-the only changes are two xcslib patches (`patches/`, see `docs/PARAMETER_PARITY.md §5`):
-the benchmark functions, and the prediction function `rls_delta` (the RLS of Lanzi et al. 2005,
-Alg. 5, with V0 = δI). xcsf_python is not modified.
+Everything lives in this `campaign/` folder. The two libraries are used as upstream code,
+with the modifications recorded in `docs/PARAMETER_PARITY.md §5`:
+
+- xcslib: two patches (`patches/`): the benchmark functions, and the prediction function
+  `rls_delta` (the RLS of Lanzi et al. 2005, Alg. 5, with V0 = δI);
+- xcsf_python: refactored in place into library version 2.1.0 (modular structure; a single RLS;
+  a recursive online Lasso). The folder keeps its upstream name. Its exact diff against the
+  upstream import is stored in every campaign manifest (`manifest/xcsf_python-vs-upstream.diff`).
+
+How the Python predictors learn is documented in `../xcsf_python-2.0.0/docs/prediction-updates.md`.
 
 | file | content |
 |---|---|
@@ -51,7 +57,7 @@ bash campaign/scripts/03_validate.sh --upstream-tests
 
 # 4. Smoke test of the whole pipeline (2 benchmarks, 2 runs, short budget; ~2 min)
 bash campaign/scripts/smoke_test.sh 4
-#    -> campaign/results/evostar2027-v2-smoke/derived/report.md
+#    -> campaign/results/evostar2027-v3-smoke/derived/report.md
 
 # 5. Optional pilot (5 runs per cell) to check run times and between-run spread
 bash campaign/scripts/04_plan.sh --profile pilot
@@ -63,15 +69,18 @@ bash campaign/scripts/07_analyze.sh --profile pilot
 bash campaign/scripts/04_plan.sh                      # plan + parity audit (fails on any mismatch)
 bash campaign/scripts/05_run_cxx.sh -j 8              # 600 xcslib runs (minutes)
 bash campaign/scripts/06_run_python.sh --study parity -j 8   # 600 Python parity runs
-bash campaign/scripts/06_run_python.sh --study pyext  -j 8   # 1200 Python-only runs (Lasso Batch dominates)
+bash campaign/scripts/06_run_python.sh --study pyext  -j 8   # 1560 Python-only runs (Lasso Batch dominates)
 bash campaign/scripts/07_analyze.sh                   # verify -> collect -> statistics -> report
 
 bash campaign/scripts/status.sh                       # progress at any time
 ```
 
-Indicative cost (one core, 50 000 learning problems, N = 800): xcslib ≈ 0.5 s per run;
-Python ≈ 15–20 s (Constant/NLMS/RLS/Lasso Online) and ≈ 80 s (Lasso Batch), measured on a
-Linux test machine. Full campaign ≈ 15 CPU-hours of Python, i.e. ≈ 2 h with 8 jobs.
+Indicative cost (one core, 50 000 learning problems, N = 800): xcslib ≈ 0.5 s per run.
+Python, library 2.1.0, median of 3 runs on `sine_low_1d` with domain-scaled inputs (Apple
+Silicon laptop; other benchmarks and machines differ): Constant 5.5 s, NLMS 7 s, `lasso_sgd` 7 s,
+`rls_delta` 15 s, `rls` (xcslib semantics) 23 s, `lasso_online` 22 s, `lasso_batch` 57 s. From
+these, the full campaign is ≈ 12 CPU-hours of Python (≈ 2 h parity, ≈ 10 h Python-only study),
+i.e. under 2 h with 8 jobs.
 
 `-j` sets parallel runs; `--study/--benchmark/--arm/--limit` select a subset (useful to
 spread the campaign over several sessions).
@@ -99,6 +108,7 @@ spread the campaign over several sessions).
 ```
 campaign/results/<campaign_id>/
   manifest/   config.resolved.json, plan_snapshot.json (environment, library hashes, patch diff),
+              xcsf_python-vs-upstream.diff (the Python library modification),
               session-*.json (one per run session), parity_audit.{csv,md}
   plan/       runs.jsonl (every run spec + hash), cxx/<key>/confsys.xcsf
   raw/        parity/cxx/<bench>/<predictor>/run_XXXX/  xcslib standard files (statistics, avf,
@@ -120,7 +130,9 @@ statistics (HL shifts, bootstrap CIs, Holm-adjusted p-values, A12, verdicts).
   replaces or extends the experiment loop.
 - **xcsf_python**: through its public scikit-learn API (`XCSFRegressor.partial_fit`,
   `predict`, `match`, `get_rules`), imported from `../xcsf_python-2.0.0/src` (not an
-  installed copy), one online pass over N fresh samples.
+  installed copy; its version must be 2.1.0), one online pass over N fresh samples.
+  Predictor settings come from `xcsfcamp/parity.py:py_params`; the validation step builds the
+  predictors through the same function.
 
 ## Changing the design
 

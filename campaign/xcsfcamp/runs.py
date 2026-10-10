@@ -1,7 +1,8 @@
 """Planning, resume and publication of runs (shared by the C++ and Python runners).
 
 Layout of results/<campaign_id>/:
-  manifest/            config, plan-time snapshot, one snapshot per run session, parity audit
+  manifest/            config, plan-time snapshot, one snapshot per run session, parity audit,
+                       xcsf_python-vs-upstream.diff (the library modification, AGENTS.md rule 3)
   plan/runs.jsonl      every planned run (key, spec, spec_hash)
   plan/cxx/<key>/confsys.xcsf   generated xcslib configurations (inputs, immutable)
   raw/<key>/           published raw results (immutable; DONE.json written last, then the
@@ -70,6 +71,8 @@ def write_plan(cfg: dict, cdir: Path) -> Dict[str, int]:
     snap = P["manifest"] / "plan_snapshot.json"
     if not snap.exists():
         snap.write_text(json.dumps(M.snapshot(), indent=2))
+        # exact diff of xcsf_python against its upstream import (hash in the snapshot just written)
+        (P["manifest"] / M.PY_LIB_DIFF_NAME).write_text(M.python_library_diff())
     return dict(total=len(new), added=added, existing=len(existing))
 
 
