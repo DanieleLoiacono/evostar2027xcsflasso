@@ -37,8 +37,9 @@ bash campaign/scripts/00_setup_python.sh
 #    (also commits the unmodified libraries first if the repository has no commit yet)
 bash campaign/scripts/01_apply_cxx_patch.sh --commit
 
-# 2. Build xcslib out of tree -> campaign/build/bin/xcsf-rf (+ build_info.json), plus the
-#    predictor test driver campaign/build/bin/pf_driver (source: campaign/tools/pf_driver.cpp)
+# 2. Build xcslib out of tree -> ~/.xcsfcamp/bin/xcsf-rf (+ campaign/build/build_info.json), plus
+#    the predictor test driver ~/.xcsfcamp/bin/pf_driver (source: campaign/tools/pf_driver.cpp).
+#    Binaries are kept outside Dropbox on purpose (override with XCSFCAMP_BIN_DIR).
 bash campaign/scripts/02_build_cxx.sh
 
 # 3. Validation gate (must end with "[ok] validation complete"; planning is refused
@@ -169,3 +170,21 @@ gsl-config --version
 
 **Architecture.** Do not mix the conda x86_64 toolchain with Homebrew's arm64 GSL: linking
 would fail with architecture errors. Use the native arm64 `clang++` together with Homebrew GSL.
+
+### `xcsf-rf` / `pf_driver` hang forever (macOS), processes in state `UE` that cannot be killed
+
+**Symptom.** `02_build_cxx.sh` stops after `[ok] built ...`, `03_validate.sh` stops at the first C++
+check; `ps aux | grep xcsf` shows `xcsf-rf` processes with state `UE`, 0 CPU, ~32 bytes of memory,
+that survive `kill -9`.
+
+**Cause.** The process is stuck in the kernel while starting a freshly written executable located in a
+folder synced by Dropbox. It never reaches `main()`, so it cannot be killed.
+
+**Fix.** Binaries are now installed outside Dropbox, in `~/.xcsfcamp/bin` (override with
+`XCSFCAMP_BIN_DIR`). Processes already stuck usually disappear only after a reboot (or after quitting
+Dropbox); then rebuild and validate:
+
+```bash
+bash campaign/scripts/02_build_cxx.sh
+bash campaign/scripts/03_validate.sh --upstream-tests
+```

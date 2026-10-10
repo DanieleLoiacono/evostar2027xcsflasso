@@ -24,8 +24,10 @@ PATCH_FILES = (
 PATCH_FILE = PATCH_FILES[0]   # backwards compatibility
 BUILD_DIR = CAMPAIGN_DIR / "build"
 BUILD_INFO = BUILD_DIR / "build_info.json"
-CXX_BIN = BUILD_DIR / "bin" / "xcsf-rf"
-PF_DRIVER_BIN = BUILD_DIR / "bin" / "pf_driver"
+# Executables are kept outside the (Dropbox-synced) project: see scripts/_env.sh
+BIN_DIR = Path(os.environ.get("XCSFCAMP_BIN_DIR") or (Path.home() / ".xcsfcamp" / "bin")).expanduser()
+CXX_BIN = BIN_DIR / "xcsf-rf"
+PF_DRIVER_BIN = BIN_DIR / "pf_driver"
 
 _EXCLUDE_DIRS = {"__pycache__", ".git", "build", "executables", ".vscode", ".pytest_cache", ".mypy_cache"}
 _EXCLUDE_SUFFIX = (".pyc", ".pyo", ".o", ".DS_Store")
@@ -139,9 +141,9 @@ def require_pf_driver() -> Path:
     """The predictor-level test driver built together with xcsf-rf (scripts/02_build_cxx.sh)."""
     info = require_cxx_build()
     if not PF_DRIVER_BIN.exists() or "pf_driver_sha256" not in info:
-        raise SystemExit("[fail] campaign/build/bin/pf_driver missing: rebuild with scripts/02_build_cxx.sh.")
+        raise SystemExit(f"[fail] {PF_DRIVER_BIN} missing: rebuild with scripts/02_build_cxx.sh.")
     if sha256_file(PF_DRIVER_BIN) != info["pf_driver_sha256"]:
-        raise SystemExit("[fail] campaign/build/bin/pf_driver does not match build_info.json; rebuild.")
+        raise SystemExit(f"[fail] {PF_DRIVER_BIN} does not match build_info.json; rebuild.")
     return PF_DRIVER_BIN
 
 
@@ -150,7 +152,7 @@ def require_cxx_build() -> Dict[str, Any]:
     if info is None or not CXX_BIN.exists():
         raise SystemExit("[fail] C++ binary missing. Run scripts/02_build_cxx.sh first.")
     if sha256_file(CXX_BIN) != info["binary_sha256"]:
-        raise SystemExit("[fail] campaign/build/bin/xcsf-rf does not match build_info.json; rebuild.")
+        raise SystemExit(f"[fail] {CXX_BIN} does not match build_info.json; rebuild.")
     if info.get("patch_sha256") != patches_sha256():
         raise SystemExit("[fail] the xcslib patches changed after the build; rebuild (scripts/02_build_cxx.sh).")
     current = tree_hash(CXX_LIB_DIR)["sha256"]

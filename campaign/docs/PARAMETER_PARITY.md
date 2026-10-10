@@ -59,7 +59,7 @@ generated per-campaign table is `results/<id>/manifest/parity_audit.md`
 campaign settings reproduces a NumPy transcription of `value.cpp`, `nlms.cpp`, `rls.cpp`
 and `rls_delta.cpp` to ≤ 1e-6 relative error on 500-sample sequences (also across an
 offspring/clone). The compiled C++ prediction functions (`nlms`, `rls`, `rls_delta`) are
-driven sample by sample by `campaign/build/bin/pf_driver` and must match the same
+driven sample by sample by `~/.xcsfcamp/bin/pf_driver` and must match the same
 transcriptions to ≤ 1e-9; a short `xcsf-rf` run checks that `rls_delta` and its `delta` are
 actually selected and parsed (every published `rls_delta` run is checked the same way).
 
@@ -145,4 +145,4 @@ ACTIONS=dummy_action USERFLAGS=-D__NICHE_TRACKING__`) out of tree with `-O2` ins
 `-O0 -g` (no `-ffast-math`, assertions kept). Flags, compiler and binary hash are in
 `campaign/build/build_info.json` and in each published run's `DONE.json`. The same object
 files (all but `xcsf_main`) are linked with `campaign/tools/pf_driver.cpp` into
-`campaign/build/bin/pf_driver`, the predictor-level test driver used by `validate`.
+`~/.xcsfcamp/bin/pf_driver`, the predictor-level test driver used by `validate`.

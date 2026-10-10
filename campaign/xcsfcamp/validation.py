@@ -7,7 +7,7 @@
    vs a NumPy transcription of the xcslib update rules (value.cpp, nlms.cpp, rls.cpp,
    rls_delta.cpp) on identical sample sequences, including offspring (clone) semantics.
 3b. C++ predictor check (requires the build): the compiled xcslib prediction functions,
-   driven sample by sample by campaign/build/bin/pf_driver, vs the same transcriptions.
+   driven sample by sample by ~/.xcsfcamp/bin/pf_driver, vs the same transcriptions.
 4. C++ benchmark parity: xcslib's own environment (execution trace) vs the
    Python definitions, for every benchmark (requires the built binary).
 5. Determinism: identical seeds reproduce identical results (both implementations).

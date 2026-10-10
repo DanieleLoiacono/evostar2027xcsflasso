@@ -3,10 +3,12 @@
 # VERSION=-rf ACTIONS=dummy_action USERFLAGS=-D__NICHE_TRACKING__) OUT OF TREE.
 #
 # The sources are copied to a temporary directory without spaces (GNU make cannot handle the
-# spaces of the Dropbox path) and the binary is installed in campaign/build/bin/xcsf-rf.
+# spaces of the Dropbox path) and the binary is installed OUTSIDE Dropbox, in
+# $XCSFCAMP_BIN_DIR (default ~/.xcsfcamp/bin): on macOS, executing binaries from a synced
+# folder can hang in an unkillable state. build_info.json and build.log stay in campaign/build/.
 # Nothing is written inside xcslib-1.5-rc1-niches/.
 #
-# A second, campaign-only executable, campaign/build/bin/pf_driver (source: campaign/tools/),
+# A second, campaign-only executable, $XCSFCAMP_BIN_DIR/pf_driver (source: campaign/tools/),
 # is linked against the same object files (all but xcsf_main): `xcsfcamp validate` uses it to
 # test the xcslib prediction functions sample by sample.
 #
@@ -54,7 +56,7 @@ cp "$CAMPAIGN_DIR/tools/pf_driver.cpp" "$WORK/pf_driver.cpp"
 ( cd "$WORK" && $CXX $CXXFLAGS_ALL -D__NICHE_TRACKING__ $PF_INC pf_driver.cpp $PF_OBJS -o executables/pf_driver $GSL_LIBS ) \
   >> "$WORK/build.log" 2>&1 || { tail -40 "$WORK/build.log"; die "pf_driver build failed"; }
 
-mkdir -p "$CAMPAIGN_DIR/build/bin"
+mkdir -p "$CAMPAIGN_DIR/build" "$XCSFCAMP_BIN_DIR"
 cp "$WORK/executables/xcsf-rf" "$CXX_BIN"
 cp "$WORK/executables/pf_driver" "$PF_DRIVER_BIN"
 cp "$WORK/build.log" "$CAMPAIGN_DIR/build/build.log"
@@ -76,6 +78,8 @@ M.BUILD_INFO.write_text(json.dumps(info, indent=2))
 print("[ok] built", info["binary"], "sha256", info["binary_sha256"][:16])
 EOF
 
-# smoke: the binary must start and refuse a missing configuration loudly
-"$CXX_BIN" >/dev/null 2>&1 || true
+# smoke: the binary must start (without arguments it only prints its usage and exits).
+# On macOS the first launch of a freshly linked binary can be delayed by the system security scan.
+echo "[info] checking that the binary starts (first launch on macOS may take a while)..."
+"$CXX_BIN" </dev/null >/dev/null 2>&1 || true
 echo "[ok] C++ build ready: $CXX_BIN"

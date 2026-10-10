@@ -17,8 +17,11 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM
 export PYTHONDONTWRITEBYTECODE=1
 export LC_ALL=C
 
-CXX_BIN="$CAMPAIGN_DIR/build/bin/xcsf-rf"
-PF_DRIVER_BIN="$CAMPAIGN_DIR/build/bin/pf_driver"
+# Executables live OUTSIDE Dropbox: on macOS, executing a binary inside a synced folder can leave the
+# process stuck in uninterruptible wait (state "UE", unkillable). build_info.json stays in campaign/build.
+export XCSFCAMP_BIN_DIR="${XCSFCAMP_BIN_DIR:-$HOME/.xcsfcamp/bin}"
+CXX_BIN="$XCSFCAMP_BIN_DIR/xcsf-rf"
+PF_DRIVER_BIN="$XCSFCAMP_BIN_DIR/pf_driver"
 
 xc() { "$PYTHON" -m xcsfcamp "$@"; }
 
