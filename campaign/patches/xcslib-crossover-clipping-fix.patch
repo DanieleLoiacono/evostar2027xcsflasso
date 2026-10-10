@@ -1,0 +1,14 @@
+diff --git a/xcslib-1.5-rc1-niches/src/conditions/real_interval_condition.cpp b/xcslib-1.5-rc1-niches/src/conditions/real_interval_condition.cpp
+index 5195e18..a868409 100755
+--- a/xcslib-1.5-rc1-niches/src/conditions/real_interval_condition.cpp
++++ b/xcslib-1.5-rc1-niches/src/conditions/real_interval_condition.cpp
+@@ -623,6 +623,9 @@ real_interval_condition::check(xcslib::interval<double>& it)
+ 		it.set_upper_bound(lb);	
+ 	}
+ 	
++	//! intervals are limited to [min_input, max_input] only when conditions are bounded
++	if (!bounded) return;
++
+ 	if (it.get_lower_bound()<real_interval_condition::min_input)
+ 	{
+ 		it.set_lower_bound(real_interval_condition::min_input);

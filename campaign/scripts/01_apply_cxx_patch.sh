@@ -12,6 +12,12 @@
 #      - real interval conditions: the fixed and gaussian mutations assigned the LOWER bound to the
 #        upper bound, producing zero-width intervals that match nothing. The two bounds now mutate
 #        independently and are swapped if they cross.
+#   4. patches/xcslib-crossover-clipping-fix.patch
+#      - real interval conditions: check(), called after a crossover that swaps single bounds, clipped
+#        the interval to [min input, max input] even with 'bounded = off'. It now clips only when
+#        'bounded = on'.
+#      Patches 3 and 4 modify the same file: with --commit this script applies and commits them
+#      one at a time, so each modification keeps its own commit.
 # xcsf_python-2.0.0 is not touched by this script (its own modification: docs/PARAMETER_PARITY.md §5.3).
 #
 # Usage: scripts/01_apply_cxx_patch.sh            apply (idempotent) and print git instructions
@@ -20,12 +26,13 @@
 set -euo pipefail
 source "$(dirname "$0")/_env.sh"
 L=xcslib-1.5-rc1-niches
-PATCHES=(xcslib-benchmark-functions xcslib-rls-delta xcslib-interval-mutation-fix)
+PATCHES=(xcslib-benchmark-functions xcslib-rls-delta xcslib-interval-mutation-fix xcslib-crossover-clipping-fix)
 FILES_xcslib_benchmark_functions=($L/src/environments/real_functions_env.cpp
                                   $L/include/environments/real_functions_env.h)
 FILES_xcslib_rls_delta=($L/include/xcsf/pf/base.h $L/include/xcsf/pf/prediction_functions.h
                         $L/src/pf/utility.cpp $L/include/xcsf/pf/rls_delta.h $L/src/pf/rls_delta.cpp)
 FILES_xcslib_interval_mutation_fix=($L/src/conditions/real_interval_condition.cpp)
+FILES_xcslib_crossover_clipping_fix=($L/src/conditions/real_interval_condition.cpp)
 MSG_xcslib_benchmark_functions="xcslib: benchmark functions (sine4, abs, sincos2d, friedman5) + accept 'min/max input' keys
 
 Campaign patch 1/2; see campaign/patches/xcslib-benchmark-functions.patch
@@ -38,6 +45,11 @@ and campaign/docs/PARAMETER_PARITY.md (section 'Library modification')."
 MSG_xcslib_interval_mutation_fix="xcslib: fix fixed/gaussian mutation of real interval conditions (upper bound was set to the lower one)
 
 Campaign patch 3/3; see campaign/patches/xcslib-interval-mutation-fix.patch
+and campaign/docs/PARAMETER_PARITY.md (section 'Library modification')."
+
+MSG_xcslib_crossover_clipping_fix="xcslib: real interval conditions are clipped to the domain only when bounded = on
+
+Campaign patch 4/4; see campaign/patches/xcslib-crossover-clipping-fix.patch
 and campaign/docs/PARAMETER_PARITY.md (section 'Library modification')."
 
 cd "$ROOT_DIR"

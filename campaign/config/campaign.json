@@ -1,5 +1,5 @@
 {
-  "campaign_id": "evostar2027-v3",
+  "campaign_id": "evostar2027-v4",
   "description": "Controlled comparison of xcsf_python-2.0.0 and xcslib-1.5-rc1-niches on continuous 1-D function approximation (single-step, supervised), plus a Python-only Lasso extension.",
 
   "n_runs": 30,

@@ -377,7 +377,7 @@ def audit_rows(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
     row("mutation operator", "mutation", cond["mutation"], "mutation", kw["mutation"], equal=True)
     row("crossover operator", "crossover", cond["crossover"], "crossover", kw["crossover"], equal=True)
     row("bounded conditions", "bounded", cond["bounded"], "bounded", kw["bounded"], equal=(cond["bounded"] == "off") == (not kw["bounded"]),
-        note="xcslib check() still clips to [min,max] after an upper-endpoint crossover")
+        note="off: no clipping to [min,max] in either (xcslib: requires patches/xcslib-crossover-clipping-fix.patch)")
     row("theta_del", "theta delete", cs["theta delete"], "theta_delete", kw["theta_delete"])
     row("delta (deletion)", "(hard-coded)", CXX_HARDCODED["delta"], "delta", kw["delta"])
     row("theta_sub", "theta GA sub", cs["theta GA sub"], "theta_subsume", kw["theta_subsume"])

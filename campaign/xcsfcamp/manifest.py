@@ -21,6 +21,7 @@ PATCH_FILES = (
     CAMPAIGN_DIR / "patches" / "xcslib-benchmark-functions.patch",   # benchmark functions + min/max input keys
     CAMPAIGN_DIR / "patches" / "xcslib-rls-delta.patch",             # prediction::rls_delta (paper's RLS)
     CAMPAIGN_DIR / "patches" / "xcslib-interval-mutation-fix.patch", # fixed/gaussian mutation of the upper bound
+    CAMPAIGN_DIR / "patches" / "xcslib-crossover-clipping-fix.patch", # no clipping to the domain when bounded = off
 )
 PATCH_FILE = PATCH_FILES[0]   # backwards compatibility
 # xcsf_python was refactored in place (docs/PARAMETER_PARITY.md §5.3). This is the commit that imported the

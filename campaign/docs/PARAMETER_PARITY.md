@@ -42,7 +42,7 @@ generated per-campaign table is `results/<id>/manifest/parity_audit.md`
 | F_I, ε_I, niche size init | `fitness init`, `error init`, `set size init` | `initial_fitness`, `initial_error`, (fixed 1.0) | equal |
 | MAM | `use MAM` read but **not settable** (rejected by `check_parameters`), default on | `use_mam=True` | equal; config rejected if `use_mam` is false |
 | error before predictor update | `update error first = on` | `error_before_prediction=True` | equal |
-| bounded conditions | `bounded = off` | `bounded=False` | equal (see differences D3) |
+| bounded conditions | `bounded = off` | `bounded=False` | equal: conditions are never clipped to the domain (xcslib: since patch §5.5) |
 | condensation | 0 problems | 0 epochs | not used (no 1:1 schedule) |
 
 ## 3. Common predictors (predictor-specific hyper-parameters)
@@ -113,8 +113,10 @@ their effect instead of hiding it. None can be aligned through configuration.
 - **D2 – interval semantics.** xcslib matches `lower < x ≤ upper` (unbounded); Python
   uses the closed interval. Measure-zero for continuous inputs, but grid points equal to
   a rule bound (e.g. the domain minimum) may be treated differently.
-- **D3 – clipping.** With `bounded = off` xcslib still clips to `[min input, max input]`
-  after a crossover that swaps upper endpoints (`check()`); Python never clips with
+- **D3 – clipping after crossover with `bounded = off`: removed** by
+  `patches/xcslib-crossover-clipping-fix.patch` (§5.5) from campaign v4 on. Until v3 xcslib
+  clipped a condition to `[min input, max input]` after a crossover that swapped single
+  bounds (`check()`), whatever the value of `bounded`; Python never clips with
   `bounded=False`.
 - **D4 – covering when the population is full.** xcslib inserts then deletes (the new
   rule may be deleted immediately and covering repeats); Python deletes first.
@@ -132,8 +134,8 @@ their effect instead of hiding it. None can be aligned through configuration.
 
 ## 5. Library modifications
 
-xcslib: three patches, applied in order by `scripts/01_apply_cxx_patch.sh` and committed separately
-(one commit each) with `--commit` (§5.1, §5.2, §5.4). xcsf_python: one refactoring, committed
+xcslib: four patches, applied in order by `scripts/01_apply_cxx_patch.sh` and committed separately
+(one commit each) with `--commit` (§5.1, §5.2, §5.4, §5.5). xcsf_python: one refactoring, committed
 separately (§5.3).
 
 ### 5.1 `campaign/patches/xcslib-benchmark-functions.patch`
@@ -224,6 +226,37 @@ added. `gaussian_mutation` had the same line and gets the same correction, altho
 zero-width rules out of ≈ 20 before the patch and with none after it; `validate` repeats this
 check on the binary. xcslib results are not comparable with campaign v2, where the bug was part
 of what the parity study measured.
+
+### 5.5 `campaign/patches/xcslib-crossover-clipping-fix.patch`
+
+Requested explicitly by the project owner (2026-10-10).
+
+**Reason.** `real_interval_condition::check()` is the repair called after the crossovers that
+swap a single bound (always in the uniform crossover; at the crossover points of the one- and
+two-point crossovers when the lower or the upper bound alone is exchanged) and after the
+proportional mutation. Besides sorting the bounds it clipped the interval to
+`[min input, max input]` unconditionally, i.e. also with `bounded = off`, where covering and the
+fixed mutation are free to place bounds outside the domain. With `bounded = off` this was
+
+- inconsistent within xcslib: the same condition was clipped or not depending on which operator
+  had produced it;
+- harmful at the lower limit: unbounded matching is `lower < x ≤ upper`, so a rule whose lower
+  bound has been clipped to exactly `min input` no longer matches `x = min input` (the special
+  case for the domain minimum exists only in the bounded matching), which is the first point of
+  the evaluation grid;
+- different from xcsf_python, which never clips with `bounded=False` (difference D3 of §4).
+
+In the v3 pilot (20 xcslib runs per benchmark) the final populations had a median of 1–2 rules
+per run with the lower bound exactly at `min input` and 1–2 with the upper bound exactly at
+`max input` (up to 5), out of ≈ 55–80 macroclassifiers.
+
+**Change.** `check()` returns after sorting when `bounded` is off: three lines added, none
+removed, in one function. With `bounded = on` nothing changes. Random draws are untouched.
+
+**Effect.** Eight short `xcsf-rf` runs (3000 learning problems, `bounded = off`) ended with 22
+bounds clipped to the domain limits out of 180 rules before the patch and with none after it;
+`validate` repeats this check on the binary together with the one of §5.4. xcslib results are
+not comparable with campaign v3 (pilot only), hence the new `campaign_id` `evostar2027-v4`.
 
 ## 6. Build
 

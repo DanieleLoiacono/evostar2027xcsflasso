@@ -14,8 +14,9 @@
    driven sample by sample by ~/.xcsfcamp/bin/pf_driver, vs the same transcriptions.
 4. C++ benchmark parity: xcslib's own environment (execution trace) vs the
    Python definitions, for every benchmark (requires the built binary).
-4b. C++ interval mutation: short xcsf-rf runs end without zero-width conditions (the fix of
-   patches/xcslib-interval-mutation-fix.patch is in the binary).
+4b. C++ interval conditions: short xcsf-rf runs end without zero-width conditions and without
+   bounds clipped to the domain (the fixes of patches/xcslib-interval-mutation-fix.patch and
+   patches/xcslib-crossover-clipping-fix.patch are in the binary).
 5. Determinism: identical seeds reproduce identical results (both implementations).
 """
 
@@ -429,23 +430,37 @@ def test_cxx_rls_delta_run(binary: Path, log):
     log("[ok] xcsf-rf runs with prediction function rls_delta (x0 and delta parsed, population readable)")
 
 
-def test_cxx_interval_mutation(binary: Path, log):
-    """The binary contains the mutation fix: no zero-width interval in the final populations of short
-    runs (standard xcslib outputs). Before patches/xcslib-interval-mutation-fix.patch every mutation of
-    an upper bound produced one, and a few always survived to the end of such runs."""
+def test_cxx_interval_conditions(binary: Path, log):
+    """The binary contains the two fixes of the interval conditions (standard xcslib outputs of short runs,
+    bounded = off as in the campaign):
+    - mutation (patches/xcslib-interval-mutation-fix.patch): no zero-width interval. Before the patch every
+      mutation of an upper bound produced one, and a few always survived to the end of such runs.
+    - crossover (patches/xcslib-crossover-clipping-fix.patch): no bound exactly equal to the domain limits.
+      Before the patch a crossover that swapped single bounds clipped the condition to [min input, max input];
+      an unclipped bound coincides with a limit, at the 6 decimals of the population file, with negligible
+      probability."""
     from .cxx import parse_population
     from .parity import render_confsys
-    total = 0
-    for seed in (1001, 1002, 1003):
-        spec = _make_spec("sine_low_1d", "nlms", n=3000, seed=seed)
+    bench = B.get("sine_low_1d")
+    lo, hi = bench.lower[0], bench.upper[0]
+    total = degenerate = clipped = outside = 0
+    for seed in range(1001, 1009):
+        spec = _make_spec(bench.name, "nlms", n=3000, seed=seed)
+        _check(spec["xcsf"]["bounded"] is False, "interval-condition check expects bounded = off")
         with tempfile.TemporaryDirectory() as td:
             _run_cxx(binary, Path(td), render_confsys(spec, "validation"))
             pop = parse_population(Path(td) / "population.xcsf-0000.gz", 1, "nlms")
-        degenerate = int((pop["upper0"] <= pop["lower0"]).sum())
-        _check(degenerate == 0, f"xcslib population (seed {seed}) has {degenerate} zero-width interval(s) out of "
-                                f"{len(pop)}: the interval-mutation fix is not in the binary (rebuild)")
         total += len(pop)
-    log(f"[ok] xcslib interval mutation: no zero-width condition in {total} final macroclassifiers of 3 short runs")
+        degenerate += int((pop["upper0"] <= pop["lower0"]).sum())
+        clipped += int((pop["lower0"] == lo).sum() + (pop["upper0"] == hi).sum())
+        outside += int(((pop["lower0"] < lo) | (pop["upper0"] > hi)).sum())
+    _check(degenerate == 0, f"xcslib populations have {degenerate} zero-width interval(s) out of {total}: "
+                            "the interval-mutation fix is not in the binary (rebuild)")
+    _check(clipped == 0, f"xcslib populations have {clipped} bound(s) clipped to the domain limits out of {total} "
+                         "rules with bounded = off: the crossover-clipping fix is not in the binary (rebuild)")
+    _check(outside > 0, "no condition extends beyond the domain: the check on clipping is not informative")
+    log(f"[ok] xcslib interval conditions: {total} final macroclassifiers of 8 short runs, no zero-width "
+        f"condition, no bound clipped to the domain ({outside} conditions extend beyond it)")
 
 
 # ------------------------------------------------------------------------------------------- 5
@@ -500,7 +515,7 @@ def run_all(out: Path, with_cxx=True, with_determinism=True):
         test_cxx_benchmarks(binary, log)
         test_cxx_predictors(require_pf_driver(), log)
         test_cxx_rls_delta_run(binary, log)
-        test_cxx_interval_mutation(binary, log)
+        test_cxx_interval_conditions(binary, log)
     else:
         log("[skip] C++ checks (--no-cxx)")
     if with_determinism:
